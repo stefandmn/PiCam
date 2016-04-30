@@ -15,11 +15,14 @@ import picamera
 
 #Class: Camera
 class Camera:
-	def __init__(self, cId=None, cResolution=(640, 480), mStreaming=True, mRecording=False, mBinarize=100, mThreshold=0.235, mSleeptime=0.1, mRecordingTransitions=False, mRecordingLocation='/tmp'):
+	def __init__(self, cId=None, cResolution=(640, 480),
+				 mStreaming=True, sBaseport=9080,
+				 mRecording=False, mBinarize=100, mThreshold=0.235, mSleeptime=0.1, mRecordingTransitions=False, mRecordingLocation='/tmp'):
 		# Initialize class public variables (class parameters)
 		self.cId = cId
 		self.cResolution = cResolution
 		self.mStreaming = mStreaming
+		self.mBaseport = sBaseport
 		self.mRecording = mRecording
 		self.mBinarize = mBinarize
 		self.mThreshold = mThreshold
@@ -101,7 +104,7 @@ class Camera:
 		self._exec = True
 		# Initiate streaming channel
 		if self.mStreaming:
-			streaming = SimpleCV.JpegStreamer('0.0.0.0:908' + str(self.cId))
+			streaming = SimpleCV.JpegStreamer('0.0.0.0:' + str(self.mBaseport + self.cId))
 		# Run surveillance workflow
 		while self._exec:
 			# Capture image frame
@@ -158,7 +161,7 @@ class CmdServer:
 		try:
 			self._socket.bind((self._host, self._port))
 		except socket.error as msg:
-			self.log('ERROR: Server binding failed. \n\tError Code: ' + str(msg[0]) + '\n\tError Message: ' + msg[1])
+			self.log('ERROR: Server binding failed. \n\t\tError Code: ' + str(msg[0]) + '\n\t\tError Message: ' + msg[1])
 			sys.exit(2)
 		# Set server connection to accept only 10 connection
 		self._socket.listen(10)
@@ -171,9 +174,9 @@ class CmdServer:
 	#Method: log
 	def log(self, data, client=False):
 		if not client:
-			print "%s\tServer > %s" %(time.strftime("%y%m%d%H%M%S", time.localtime()), str(data))
+			print "%s | Server > %s" %(time.strftime("%y%m%d%H%M%S", time.localtime()), str(data))
 		else:
-			print "%s\tClient > %s" %(time.strftime("%y%m%d%H%M%S", time.localtime()), str(data))
+			print "%s | Client > %s" %(time.strftime("%y%m%d%H%M%S", time.localtime()), str(data))
 
 	#Method: start
 	def start(self):
@@ -183,7 +186,7 @@ class CmdServer:
 		# Start the infinite look
 		while self._exec:
 			conn, addr = self._socket.accept()
-			self.log("Connection: " +str(addr), True)
+			self.log("Connection from: " +str(addr), True)
 			# Receive data from client and process it
 			data = conn.recv(1024)
 			if not data:
@@ -287,9 +290,8 @@ class CmdClient:
 			else:
 				return {'status':True, 'message':""}
 
-	#Method: send
-	def send(self):
-		# Generate command
+	#Method: getTextCommand
+	def getTextCommand(self):
 		command = None
 		if self.action is not None and self.subject is not None:
 			command = self.action + " " + self.subject
@@ -297,6 +299,16 @@ class CmdClient:
 				command += " " + self.property
 		if self.target is not None:
 			command += " on " + self.target
+		return command
+
+	def getServerAddress(self):
+		return self._host + ":" + str(self._port)
+
+	#Method: send
+	def send(self):
+		# Generate command received from standard input
+		command = self.getTextCommand()
+		client.log("Running: " + client.getTextCommand())
 		# Send the command to server component
 		if command is not None:
 			try:
@@ -307,7 +319,14 @@ class CmdClient:
 				_socket.close()
 				return {'status':True, 'message':answer}
 			except socket.error as msg:
-				return {'status':True, 'message':'Client connection failed. \n\tCode: ' + str(msg[0]) + '\n\tMessage: ' + msg[1]}
+				return {'status':True, 'message':'Client connection failed. \n\t\tCode: ' + str(msg[0]) + '\n\t\tMessage: ' + msg[1]}
+
+	#Method: log
+	def log(self, data, server=False):
+		if not server:
+			print "%s | Client > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), str(data))
+		else:
+			print "%s | Server > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), str(data))
 
 
 def usage():
@@ -334,7 +353,7 @@ In order to run server or client modules use the syntax:
 	"""
 
 if __name__=="__main__":
-	# Global variables to identify input paraters
+	# Global variables to identify input parameters
 	command = None
 	host = None
 	port = None
@@ -371,12 +390,13 @@ if __name__=="__main__":
 			server.start()
 		else:
 			# Send command to server
+			client.log("PiCam started to call " + client.getServerAddress())
 			output = client.send()
 			if output['status']:
-				print "Server > %s" %output['message']
+				client.log(output['message'], True)
 			else:
-				print "Client > ERROR: %s" %output['message']
+				client.log("ERROR: " + output['message'])
 				sys.exit(1)
 	else:
-		print "Client > ERROR: %s" %output['message']
+		client.log("ERROR: " + output['message'])
 		sys.exit(1)
