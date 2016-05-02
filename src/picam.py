@@ -172,11 +172,9 @@ class CmdServer:
 		self._port = port
 		# Validate host name
 		if self._host is None or self._host == '':
-			self._host = socket.gethostname()
-			if self._host is None or self._host == '':
-				self._host = '127.0.0.1'
+			self._host = '127.0.0.1'
 		# Validate port
-		if self._port is None or self._port <= 0:
+		if self._port is None or not isinstance(self._port, int) or self._port <= 0:
 			self._port = 9079
 		# Instantiate server execution flag
 		self._exec = False
@@ -190,7 +188,7 @@ class CmdServer:
 			sys.exit(2)
 		# Set server connection to accept only 10 connection
 		self._socket.listen(10)
-		self.log("PiCam started on " + self.getServerAddress())
+		self.log("PiCam Server started on " + self.getServerAddress())
 
 	#Method: getServerAddress
 	def getServerAddress(self):
@@ -206,7 +204,6 @@ class CmdServer:
 			if isinstance(data, list):
 				message = ''
 				for obj in data:
-					print "TEST: [%s]" %str(obj)
 					if isinstance(obj, BaseException):
 						part = str(obj)
 						if part is None or part.strip() == '':
@@ -267,11 +264,12 @@ class CmdServer:
 			self.log('Server interrupted by user control')
 			self.runStopServer(None)
 			sys.exit(2)
-		except BaseException as baseerr:
-			self.log(["Server error:", baseerr])
+		except BaseException as baserr:
+			self.log(["Server error:", baserr])
 			self.runStopServer(None)
 			sys.exit(6)
-		self.log("PiCam stopped.\n")
+		self.log("PiCam stopped.")
+		print
 
 	#Method: runStopServer
 	def runStopServer(self, connection):
@@ -286,8 +284,8 @@ class CmdServer:
 				try:
 					self.runStopService(connection, key)
 					time.sleep(1)
-				except BaseException as baseerr:
-					self.log(["Error stopping service on camera", key , ":", baseerr])
+				except BaseException as baserr:
+					self.log(["Error stopping service on camera", key , ":", baserr])
 
 	#Method: runStartService
 	def runStartService(self, connection, target):
@@ -334,11 +332,9 @@ class CmdClient:
 		self._port = port
 		# Validate host name
 		if self._host is None or self._host == '':
-			self._host = socket.gethostname()
-			if self._host is None or self._host == '':
-				self._host = '127.0.0.1'
+			self._host = '127.0.0.1'
 		# Validate port
-		if self._port is None or self._port <= 0:
+		if self._port is None or not isinstance(self._port, int) or self._port <= 0:
 			self._port = 9079
 
 	#Method: getServerAddress
@@ -346,35 +342,45 @@ class CmdClient:
 		return self._host + ":" + str(self._port)
 
 	#Method: connect
-	def run(self, data):
+	def run(self, command):
+		# Instantiate Data module and parse (validate) input command
 		try:
-			# Generate command received from standard input
-			command = data.getTextCommand()
-			# Send the command to server component
-			if command is not None:
-				try:
-					client.log("Sending command: " + command)
-					_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-					_socket.connect((self._host, self._port))
-					_socket.sendall(command)
-					while True:
-						answer = _socket.recv(1024)
-						if answer != '.' and answer != '':
-							self.log(answer, True)
-							if answer.endswith('.'):
-								break
-						else:
+			data = CmdData(command)
+		except BaseException as baserr:
+			self.log(["Data error:", baserr])
+			sys.exit(1)		
+
+		if data.action == "start" and (data.subject == "server" or data.subject is None):
+			# Start server or client module (depending by the sibject providing in the command line)
+			self.log("PiCam Client is initiating server instance")
+			server = CmdServer(self._host, self._port)
+			server.run()
+		else:
+			# Send command to server
+			self.log("PiCam Client is calling " + client.getServerAddress())
+			try:
+				# Generate command received from standard input
+				_command = data.getTextCommand()
+				self.log("Sending command: " + _command)
+				_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+				_socket.connect((self._host, self._port))
+				_socket.sendall(_command)
+				while True:
+					_answer = _socket.recv(1024)
+					if _answer != '.' and _answer != '':
+						self.log(_answer, True)
+						if _answer.endswith('.'):
 							break
-					_socket.close()
-				except IOError as ioerr:
-					self.log(['Client connection failed:', ioerr])
-					sys.exit(1)
-			else:
-				self.log("Input command is null or can not be translated")
+					else:
+						break
+				_socket.close()
+			except IOError as ioerr:
+				self.log(['Client connection error:', ioerr])
 				sys.exit(1)
-		except BaseException as baseerr:
-			self.log(["Client error:", baseerr])
-			sys.exit(6)
+			except BaseException as baserr:
+				self.log(["Client error:", baserr])
+				sys.exit(1)
+			print
 
 	#Method: log
 	def log(self, data, server=False):
@@ -526,30 +532,11 @@ if __name__=="__main__":
 		elif opt == '--help':
 			usage()
 			sys.exit(0)
-	# Instantiate Client module, validate command and send it to the server (or start the server component)
-	if host is not None or (port is not None and port > 0):
-		client = CmdClient(host, port)
-	else:
-		client = CmdClient()
 	# Validate command: if command was not specified through input options collect all input parameters and aggregate them in one single command
 	if command is None or command == '':
 		command = ' '.join(sys.argv[1:])
-	# Instantiate Data module and parse (validate) input command
-	try:
-		data = CmdData(command)
-		# Start server or client module (depending by the sibject providing in the command line)
-		if data.action == "start" and (data.subject == "server" or data.subject is None):
-			if host is not None or (port is not None and port > 0):
-				server = CmdServer(host, port)
-			else:
-				server = CmdServer()
-			server.run()
-			sys.exit(0)
-		else:
-			# Send command to server
-			client.log("PiCam is calling " + client.getServerAddress())
-			client.run(data)
-			sys.exit(0)
-	except BaseException as baseerr:
-		client.log(["Client error:", baseerr])
-		sys.exit(1)
+	# Instantiate Client module an run the command
+	client = CmdClient(host, port)
+	client.run(command)
+	# Client normal exist
+	sys.exit(0)
