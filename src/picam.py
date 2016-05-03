@@ -35,8 +35,8 @@ class Camera(threading.Thread):
 		self._s_port = s_port
 		self._s_sleeptime = s_sleeptime
 		self._recording = recording
-		self.r_binarize = r_binarize
-		self.r_threshold = r_threshold
+		self._r_binarize = r_binarize
+		self._r_threshold = r_threshold
 		self._r_transitions = r_transitions
 		self._r_location = r_location
 		# Initialize class private variables
@@ -105,10 +105,10 @@ class Camera(threading.Thread):
 	def isMotionDetected(self):
 		if self._nframe is not None:
 			if self._pframe is not None:
-				diff = (self._nframe.toGray() - self._pframe.toGray()).binarize(self.r_binarize).invert()
+				diff = (self._nframe.toGray() - self._pframe.toGray()).binarize(self._r_binarize).invert()
 				mean = diff.getNumpy().mean()
 				# Validate if found motion is bigger than threshold
-				if mean >= self.r_threshold:
+				if mean >= self._r_threshold:
 					return True
 				else:
 					return False
@@ -148,7 +148,7 @@ class Camera(threading.Thread):
 		if self.isRecording():
 			try:
 				message = time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
-				filename = self._r_location + "/photo-cam" + str(self._id).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S%f") + ".png"
+				filename = self._r_location + os.path.sep + "photo-cam" + str(self._id).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S%f") + ".png"
 				if self.isRecordingTransitions():
 					drawing = SimpleCV.DrawingLayer((self._pframe.width * 2 + 2, self._pframe.height))
 					drawing.blit(self._pframe)
@@ -238,6 +238,30 @@ class Camera(threading.Thread):
 	#Method: getSleeptime
 	def getSleeptime(self):
 		return self._s_sleeptime
+
+	#Method: setRecordingLocation
+	def setRecordingLocation(self, location):
+		self._r_location = location
+
+	#Method: getRecordingLocation
+	def getRecordingLocation(self):
+		return self._r_location
+
+	#Method: setRecordingBinarize
+	def setRecordingBinarize(self, binarize):
+		self._r_binarize = binarize
+
+	#Method: getRecordingBinarize
+	def getRecordingBinarize(self):
+		return self._r_binarize
+
+	#Method: setRecordingThreshold
+	def setRecordingThreshold(self, threshold):
+		self._r_threshold = threshold
+
+	#Method: getRecordingThreshold
+	def getRecordingThreshold(self):
+		return self._r_threshold
 
 	#Method: stop
 	def stop(self):
@@ -383,7 +407,7 @@ class CmdServer:
 						if data.action == 'stop' and data.subject == 'service':
 							self.runStopService(connection, data.target)
 						if (data.action == 'set' or data.action == 'enable' or data.action == 'disable') and data.subject == 'property':
-							self.runSetProperty(connection, data.property, data.target)
+							self.runSetProperty(connection, data)
 						connection.sendall(".")
 					connection.close()
 				except StandardError as stderr:
@@ -398,10 +422,14 @@ class CmdServer:
 			print
 			self.log('Server interrupted by user control')
 			self.runStopServer(None)
+			if self._socket is not None:
+				self._socket.close()
 			sys.exit(2)
 		except BaseException as baserr:
 			self.log(["Server error:", baserr])
 			self.runStopServer(None)
+			if self._socket is not None:
+				self._socket.close()
 			sys.exit(6)
 		self.log("PiCam stopped.")
 		print
@@ -454,8 +482,55 @@ class CmdServer:
 			self.log("Camera could not be identified to stop service", socket=connection, both=True)
 
 	#Method: runSetProperty
-	def runSetProperty(self,  connection, property, target):
-		self.log("Setting property '" + property + "' on camera " + target, socket=connection, both=True)
+	def runSetProperty(self,  connection, data):
+		# Translate enable and disable actions
+		if data.action == data._actions[3]:
+			data.property += " = True"
+		if data.action == data._actions[4]:
+			data.property += " = False"
+		# Ge target camera
+		if data.target in self._cameras:
+			camera = self._cameras[data.target]
+			# Translate property expression
+			self.log("Setting '" + data.property + "' on camera " + data.target, socket=connection, both=True)
+			camprop = data.property.split('=')[0].strip()
+			camdata = data.property.split('=')[1].strip()
+			# Evaluate streaming property
+			if camprop == data._properties[0]:
+				if str2bool(camdata):
+					camera.setOnStreaming()
+				else:
+					camera.setOffStreaming()
+			# Evaluate recording property
+			elif camprop == data._properties[1]:
+				if str2bool(camdata):
+					camera.setOnRecording()
+				else:
+					camera.setOffRecording()
+			# Evaluate recording_transitions property
+			elif camprop == data._properties[2]:
+				if str2bool(camdata):
+					camera.setOnRecordingTransitions()
+				else:
+					camera.setOnRecordingTransitions()
+			# Evaluate resolution property
+			elif camprop == data._properties[3]:
+				#todo - set/change camera resolution
+				print
+			# Evaluate binarize property
+			elif camprop == data._properties[4]:
+				camera.setRecordingBinarize(int(camdata))
+			# Evaluate threshold property
+			elif camprop == data._properties[5]:
+				camera.setRecordingThreshold(int(camdata))
+			# Evaluate recording_location property
+			elif camprop == data._properties[6]:
+				camera.setRecordingLocation(str(camdata))
+			# Evaluate sleeptime property
+			elif camprop == data._properties[7]:
+				camera.setSleeptime(int(camdata))
+		else:
+			self.log("Camera " + data.target + " is not yet started", socket=connection, both=True)
 
 
 #Class: CmdClient
@@ -648,6 +723,14 @@ In order to run server or client modules use the syntax:
 	> picam --command="set parameter resolution=1280,720 on c1" --host="127.0.0.1" --port=6400
 = run client that will send the command described by a specific option to a dedicated server
 	"""
+
+def str2bool(v):
+	if v.lower() in ("on", "yes", "true", "t", "1"):
+		return True
+	elif v.lower() in ("off", "no", "false", "f", "0"):
+		return False
+	else:
+		return None
 
 
 if __name__=="__main__":
