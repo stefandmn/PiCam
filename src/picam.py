@@ -15,8 +15,8 @@ import threading
 
 #Class: Camera
 class Camera(threading.Thread):
-	def __init__(self, c_id, c_resolution=(640, 480),
-				 streaming=True, s_port=9080, s_sleeptime=0.1,
+	def __init__(self, c_id, c_resolution=None,
+				 streaming=False, s_port=9080, s_sleeptime=0.1,
 				 recording=False, r_binarize=100, r_threshold=0.235, r_transitions=False, r_location='/tmp'):
 		# Validate camera id input parameter
 		if c_id is not None and str(c_id).startswith('#'):
@@ -29,16 +29,16 @@ class Camera(threading.Thread):
 		self.name = "Camera #" + str(c_id)
 		self._stop = threading.Event()
 		# Initialize class public variables (class parameters)
-		self.id = c_id
-		self.resolution = c_resolution
-		self.streaming = streaming
-		self.s_port = s_port
-		self.s_sleeptime = s_sleeptime
-		self.recording = recording
+		self._id = c_id
+		self._resolution = c_resolution
+		self._streaming = streaming
+		self._s_port = s_port
+		self._s_sleeptime = s_sleeptime
+		self._recording = recording
 		self.r_binarize = r_binarize
 		self.r_threshold = r_threshold
-		self.r_transitions = r_transitions
-		self.r_Location = r_location
+		self._r_transitions = r_transitions
+		self._r_location = r_location
 		# Initialize class private variables
 		self._exec = False
 		self._pframe = None
@@ -46,22 +46,49 @@ class Camera(threading.Thread):
 		# Define tools
 		self._camera = None
 		self._stream = None
-		# Identify type of camera
-		if self.resolution is not None:
-			if self.id <= 0:
-				self._camera = picamera.PiCamera(resolution=self.resolution)
-			else:
-				self._camera = SimpleCV.Camera(self.id - 1, {'width':self.resolution[0],'height':self.resolution[1]}, threaded=False)
-		else:
-			if self.id <= 0:
-				self._camera = picamera.PiCamera()
-			else:
-				self._camera = SimpleCV.Camera(self.id - 1)
+		# Identify type of camera and initialize camera device
+		self.setOnCamera()
+		# Activate recording if was specified during initialization
+		if self._recording:
+			self.setOnRecording()
 		self.log("Service has been initialized")
-		if self.recording:
-			self._pframe = self.getImage()
-			self._pframe.drawText("Start monitoring @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime()), self._pframe.width - 250, self._pframe.height - 20, (255, 255, 255), 20)
-			self._pframe.save(self.r_Location + os.path.sep + "photo-cam" + str(self.id).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S%f") +".png")
+
+	#Method: getId
+	def getId(self):
+		return self._id
+
+	#Method: setOnCamera
+	def setOnCamera(self):
+		if self._camera is None:
+			try:
+				if self._resolution is not None:
+					if self._id == 0:
+						self._camera = picamera.PiCamera(resolution=self._resolution)
+					else:
+						self._camera = SimpleCV.Camera(self._id - 1, {'width':self._resolution[0],'height':self._resolution[1]})
+				else:
+					if self._id == 0:
+						self._camera = picamera.PiCamera()
+					else:
+						self._camera = SimpleCV.Camera(self._id - 1)
+			except BaseException as baseerr:
+				self.log(["Error starting camera service:", baseerr])
+		else:
+			self.log("Camera service is already started")
+
+	#Method: setOffCamera
+	def setOffCamera(self):
+		if self._camera is not None:
+			try:
+				# For PiCamera call close method
+				if isinstance(self._camera, picamera.PiCamera):
+					self._camera.close()
+				# Destroy Camera instance
+				self._camera = None
+			except BaseException as baseerr:
+				self.log(["Error stopping camera service:", baseerr])
+		else:
+			self.log("Camera service is already stopped")
 
 	#Method: getImage
 	def getImage(self):
@@ -75,7 +102,7 @@ class Camera(threading.Thread):
 		return image
 
 	#Method: isMotion
-	def isMotion(self):
+	def isMotionDetected(self):
 		if self._nframe is not None:
 			if self._pframe is not None:
 				diff = (self._nframe.toGray() - self._pframe.toGray()).binarize(self.r_binarize).invert()
@@ -90,39 +117,138 @@ class Camera(threading.Thread):
 		else:
 			return False
 
-	#Method: setRecording
-	def setRecording(self):
-		message = time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
-		filename = self.r_Location + "/photo-cam" + str(self.id).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S%f") + ".png"
-		if self.r_transitions:
-			drawing = SimpleCV.DrawingLayer((self._pframe.width * 2 + 2, self._pframe.height))
-			drawing.blit(self._pframe)
-			drawing.blit(self._nframe, (self._pframe.width + 2, 0))
-			drawing.line((self._pframe.width + 1, 0), (self._pframe.width + 1, self._pframe.height))
-			cframe = self._pframe.copy().resize(self._nframe.width * 2, self._nframe.height)
-			cframe.addDrawingLayer(drawing)
-			cframe.drawText(message, self._nframe.width * 2 - 130, self._nframe.height - 20, (255, 255, 255), 20)
-			cframe.save(filename)
+	#Method: setOnRecording
+	def setOnRecording(self):
+		if not self._recording:
+			try:
+				self._pframe = self.getImage()
+				self._pframe.drawText("Start monitoring @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime()), self._pframe.width - 250, self._pframe.height - 20, (255, 255, 255), 20)
+				self._pframe.save(self._r_location + os.path.sep + "photo-cam" + str(self._id).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S%f") +".png")
+				self._recording = True
+			except IOError as ioerr:
+				self.log(["Error initializing recording function:", ioerr])
+				self._recording = False
 		else:
-			self._nframe.drawText(message, self._nframe.width - 130, self._nframe.height - 20, (255, 255, 255), 20)
-			self._nframe.save(filename)
+			self.log("Recording function is already enabled")
+
+	#Method: setOffRecording
+	def setOffRecording(self):
+		if self._recording:
+			self._recording = False
+			self._pframe = None
+		else:
+			self.log("Recording function is not enabled")
+
+	#Method: isRecording
+	def isRecording(self):
+		return self._recording
+
+	#Method: runRecording
+	def runRecording(self):
+		if self.isRecording():
+			try:
+				message = time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
+				filename = self._r_location + "/photo-cam" + str(self._id).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S%f") + ".png"
+				if self.isRecordingTransitions():
+					drawing = SimpleCV.DrawingLayer((self._pframe.width * 2 + 2, self._pframe.height))
+					drawing.blit(self._pframe)
+					drawing.blit(self._nframe, (self._pframe.width + 2, 0))
+					drawing.line((self._pframe.width + 1, 0), (self._pframe.width + 1, self._pframe.height))
+					cframe = self._pframe.copy().resize(self._nframe.width * 2, self._nframe.height)
+					cframe.addDrawingLayer(drawing)
+					cframe.drawText(message, self._nframe.width * 2 - 130, self._nframe.height - 20, (255, 255, 255), 20)
+					cframe.save(filename)
+				else:
+					self._nframe.drawText(message, self._nframe.width - 130, self._nframe.height - 20, (255, 255, 255), 20)
+					self._nframe.save(filename)
+			except IOError as ioerr:
+				self.log(["Error recording data:", ioerr])
+				self._recording = False
+
+	#Method: setOnRecordingTransitions
+	def setOnRecordingTransitions(self):
+		if not self._r_transitions:
+			self._r_transitions = True
+		else:
+			self.log("Recording transitions function is already enabled")
+
+	#Method: setOffRecordingTransitions
+	def setOffRecordingTransitions(self):
+		if self._r_transitions:
+			self._r_transitions = True
+		else:
+			self.log("Recording transitions function is not enabled")
+
+	#Method: isRecordingTransitions
+	def isRecordingTransitions(self):
+		return self._r_transitions
+
+	#Method: setOnStreaming
+	def setOnStreaming(self):
+		if not self._streaming:
+			try:
+				hostandport = '0.0.0.0:' + str(self._s_port)
+				self._stream = SimpleCV.JpegStreamer(hostandport)
+				self.log("Streaming started on " + hostandport)
+				self._streaming = True
+			except IOError as ioerr:
+				self.log(["Error initializing streaming function:", ioerr])
+				self._streaming = False
+		else:
+			self.log("Streaming function is already enabled")
+
+	#Method: setOffStreaming
+	def setOffStreaming(self):
+		if self._streaming:
+			try:
+				self._stream.server.shutdown()
+				self._stream.server.server_close()
+				self._stream = None
+				self._streaming = False
+			except IOError as ioerr:
+				self.log(["Error disabling streaming function:", ioerr])
+		else:
+			self.log("Streaming function is not enabled")
+
+	#Method: setStreamingPort
+	def setStreamingPort(self, port):
+		self._s_port = port
+
+	#Method: getStreamingPort
+	def getStreamingPort(self):
+		return self._s_port
+
+	#Method: isStreaming
+	def isStreaming(self):
+		return self._streaming
+
+	#Method: runStreaming
+	def runStreaming(self):
+		if self.isStreaming():
+			try:
+				if self._stream is not None:
+					self._nframe.save(self._stream.framebuffer)
+			except IOError as ioerr:
+				self.log(["Error streaming data:", ioerr])
+
+	#Method: setSleeptime
+	def setSleeptime(self, sleeptime):
+		self._s_sleeptime = sleeptime
+
+	#Method: getSleeptime
+	def getSleeptime(self):
+		return self._s_sleeptime
 
 	#Method: stop
 	def stop(self):
 		self._exec = False
-		self.streaming = False
-		self.recording = False
+		# Stop recording
+		self.setOffRecording()
 		# Stop streaming
-		if self._stream is not None:
-			self._stream.server.shutdown()
-			self._stream.server.server_close()
-			self._stream = None
-		# For PiCamera call close method
-		if isinstance(self._camera, picamera.PiCamera):
-			self._camera.close()
-		# Destroy Camera instance
-		self._camera = None
-		# Stop the thread
+		self.setOffStreaming()
+		# Stop camera
+		self.setOffCamera()
+		# Stop this thread
 		self._stop.set()
 		self.log("Service has been stopped")
 
@@ -132,32 +258,41 @@ class Camera(threading.Thread):
 
 	#Method: log
 	def log(self, data):
-		print "%s | %s > %s" %(time.strftime("%y%m%d%H%M%S", time.localtime()), self.name, str(data))
+		if data is not None:
+			if isinstance(data, list):
+				message = ''
+				for obj in data:
+					if isinstance(obj, BaseException):
+						part = str(obj)
+						if part is None or part.strip() == '':
+							part = type(obj).__name__
+						message += ' ' + part
+					else:
+						message += ' ' + str(obj)
+				message = message.strip()
+			else:
+				message = str(data)
+			print "%s | %s > %s" %(time.strftime("%y%m%d%H%M%S", time.localtime()), self.name, message)
 
 	#Method: start
 	def run(self):
 		self._exec = True
-		# Initiate streaming channel
-		if self.streaming:
-			hostandport = '0.0.0.0:' + str(self.s_port + self.id)
-			self._stream = SimpleCV.JpegStreamer(hostandport)
-			self.log("Streaming started on " + hostandport)
 		# Run surveillance workflow
 		while self._exec:
 			# Capture image frame
 			self._nframe = self.getImage()
 			# If the streaming is active send the picture through the streaming channel
-			if self._stream is not None and self.streaming == True:
-				self._nframe.save(self._stream.framebuffer)
+			if self.isStreaming():
+				self.runStreaming()
 			# If motion recording feature is active identify motion and save pictures
-			if self.recording:
+			if self.isRecording():
 				# Check if previous image has been captured
-				if self.isMotion():
-					self.setRecording()
+				if self.isMotionDetected():
+					self.runRecording()
 			# Set previous image with the existing capture
 			self._pframe = self._nframe
 			# Sleep for couple of milliseconds and then run again
-			time.sleep(self.s_sleeptime)
+			time.sleep( self.getSleeptime() )
 
 
 #Class: CmdServer
@@ -295,6 +430,7 @@ class CmdServer:
 			else:
 				if target is not None:
 					camera = Camera(target)
+					camera.setStreamingPort(self._port + 1 + camera.getId())
 					camera.start()
 					self._cameras[target] = camera
 					self.log("Camera " + target + " has been started", socket=connection)
