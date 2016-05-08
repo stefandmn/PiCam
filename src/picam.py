@@ -1,23 +1,28 @@
-#!/usr/bin/env python
+#!/usr/bin/python
 
-import io
 import os
-import PIL
+import io
+import cv2
 import sys
 import time
+import Image
+import numpy
 import socket
 import getopt
 import datetime
-import SimpleCV
-import picamera
+import StringIO
 import threading
+import traceback
+from picamera import PiCamera
+from SocketServer import ThreadingMixIn, BaseRequestHandler, TCPServer
+from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 
 
 #Class: Camera
 class Camera(threading.Thread):
-	def __init__(self, c_id, c_resolution=None,
-				 streaming=False, s_port=9080, s_sleeptime=0.1,
-				 recording=False, r_binarize=100, r_threshold=0.235, r_transitions=False, r_location='/tmp'):
+	def __init__(self, c_id, c_resolution=None, c_framerate=None,
+				streaming=False, s_port=9080, s_sleeptime=0.1,
+				recording=False, r_threshold=500, r_location='/tmp'):
 		# Validate camera id input parameter
 		if c_id is not None and str(c_id).startswith('#'):
 			c_id = int(filter(str.isdigit, c_id))
@@ -25,32 +30,34 @@ class Camera(threading.Thread):
 			raise RuntimeError('Invalid camera identifier: ' + c_id)
 		# Initialize threading options
 		threading.Thread.__init__(self)
-		self.threadID = c_id
 		self.name = "Camera #" + str(c_id)
 		self._stop = threading.Event()
 		# Initialize class public variables (class parameters)
 		self._id = c_id
 		self._resolution = c_resolution
-		self._streaming = streaming
+		self._framerate = c_framerate
 		self._s_port = s_port
 		self._s_sleeptime = s_sleeptime
-		self._recording = recording
-		self._r_binarize = r_binarize
 		self._r_threshold = r_threshold
-		self._r_transitions = r_transitions
 		self._r_location = r_location
 		# Initialize class private variables
 		self._exec = False
 		self._pframe = None
-		self._nframe = None
+		self._cframe = None
 		# Define tools
 		self._camera = None
 		self._stream = None
 		# Identify type of camera and initialize camera device
 		self.setOnCamera()
 		# Activate recording if was specified during initialization
-		if self._recording:
-			self.setOnRecording()
+		if recording:
+			self._setRecording()
+		else:
+			self._recording = False
+		if streaming:
+			self._setStreaming()
+		else:
+			self._streaming = False
 		self.log("Service has been initialized")
 
 	#Method: getId
@@ -61,18 +68,21 @@ class Camera(threading.Thread):
 	def setOnCamera(self):
 		if self._camera is None:
 			try:
-				if self._resolution is not None:
-					if self._id == 0:
-						self._camera = picamera.PiCamera(resolution=self._resolution)
-					else:
-						self._camera = SimpleCV.Camera(self._id - 1, {'width':self._resolution[0],'height':self._resolution[1]})
+				if self._id == 0:
+					self._camera = PiCamera()
+					if self._resolution is not None:
+						self._camera.resolution=self._resolution
+					if self._framerate is not None:
+						self._camera.framerate = self._framerate
 				else:
-					if self._id == 0:
-						self._camera = picamera.PiCamera()
-					else:
-						self._camera = SimpleCV.Camera(self._id - 1)
+					self._camera = cv2.VideoCapture(self._id - 1)
+					if self._resolution is not None:
+						self._camera.set(cv2.cv.CV_CAP_PROP_FRAME_WIDTH, self._resolution[0])
+						self._camera.set(cv2.cv.CV_CAP_PROP_FRAME_HEIGHT, self._resolution[1])
+					if self._framerate is not None:
+						self._camera.set(cv2.cv.CV_CAP_PROP_FPS, self._framerate)
 			except BaseException as baseerr:
-				self.log(["Error starting camera service:", baseerr])
+				self.log(["Error initializing camera service:", baseerr])
 		else:
 			self.log("Camera service is already started")
 
@@ -81,8 +91,10 @@ class Camera(threading.Thread):
 		if self._camera is not None:
 			try:
 				# For PiCamera call close method
-				if isinstance(self._camera, picamera.PiCamera):
+				if isinstance(self._camera, PiCamera):
 					self._camera.close()
+				else:
+					self._camera.release()
 				# Destroy Camera instance
 				self._camera = None
 			except BaseException as baseerr:
@@ -90,50 +102,75 @@ class Camera(threading.Thread):
 		else:
 			self.log("Camera service is already stopped")
 
+	#Method: getCurrentFrame
+	def getCurrentFrame(self):
+		return self._cframe
+
+	#Method: getPreviousFrame
+	def getPreviousFrame(self):
+		return self._pframe
+
 	#Method: getImage
-	def getImage(self):
-		if isinstance(self._camera, SimpleCV.Camera):
-			image = self._camera.getImage()
+	def _getCapture(self):
+		if isinstance(self._camera, PiCamera):
+			stream = io.BytesIO()
+			buff = numpy.fromstring(stream.getvalue(), dtype=numpy.uint8)
+			frame = cv2.imdecode(buff, 1)
 		else:
-			bytebuf = io.BytesIO()
-			self._camera.capture(bytebuf, format='jpeg', use_video_port=True)
-			bytebuf.seek(0)
-			image = SimpleCV.Image(PIL.Image.open(bytebuf))
-		return image
+			ret, frame = self._camera.read()
+		return frame
 
 	#Method: isMotion
 	def isMotionDetected(self):
-		if self._nframe is not None:
+		motion = False
+		if self._cframe is not None:
 			if self._pframe is not None:
-				diff = (self._nframe.toGray() - self._pframe.toGray()).binarize(self._r_binarize).invert()
-				mean = diff.getNumpy().mean()
-				# Validate if found motion is bigger than threshold
-				if mean >= self._r_threshold:
-					return True
-				else:
-					return False
-			else:
-				return False
-		else:
-			return False
+				# convert the frames to grayscale, and blur them
+				frame1 = cv2.cvtColor(self._pframe, cv2.COLOR_BGR2GRAY)
+				frame1 = cv2.GaussianBlur(frame1, (21, 21), 0)
+				frame2 = cv2.cvtColor(self._cframe, cv2.COLOR_BGR2GRAY)
+				frame2 = cv2.GaussianBlur(frame2, (21, 21), 0)
+				# save current frame into the previous one
+				self._pframe = self._cframe
+				# compute the absolute difference between the current frame and first frame
+				frameDelta = cv2.absdiff(frame1, frame2)
+				thresh = cv2.threshold(frameDelta, 25, 255, cv2.THRESH_BINARY)[1]
+				# dilate the thresholded image to fill in holes, then find contours on thresholded image
+				thresh = cv2.dilate(thresh, None, iterations=2)
+				(contours, _) = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+				# loop over the contours
+				for c in contours:
+					# if the contour is too small, ignore it
+					if cv2.contourArea(c) >= self._r_threshold:
+						#mark motion
+						motion = True
+						# compute the bounding box for the contour, draw it on the frame
+						(x, y, w, h) = cv2.boundingRect(c)
+						cv2.rectangle(self._cframe, (x, y), (x + w, y + h), (255, 255, 255), 2)
+		return motion
+
+	#Method: _setRecording
+	def _setRecording(self):
+		try:
+			self._cframe = self._pframe = self._getCapture()
+			cv2.putText(self._pframe, "CAM " + str(self._id).rjust(2, '0') + " - Start monitoring @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime()),(10, self._pframe.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
+			cv2.imwrite(self._r_location + os.path.sep + "photo-cam" + str(self._id).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S%f") +".png", self._pframe)
+			self._pframe = self._cframe
+			self._recording = True
+		except IOError as ioerr:
+			self.log(["Error initializing recording function:", ioerr])
+			self._recording = False
 
 	#Method: setOnRecording
 	def setOnRecording(self):
-		if not self._recording:
-			try:
-				self._pframe = self.getImage()
-				self._pframe.drawText("Start monitoring @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime()), self._pframe.width - 250, self._pframe.height - 20, (255, 255, 255), 20)
-				self._pframe.save(self._r_location + os.path.sep + "photo-cam" + str(self._id).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S%f") +".png")
-				self._recording = True
-			except IOError as ioerr:
-				self.log(["Error initializing recording function:", ioerr])
-				self._recording = False
+		if not self.isRecording():
+			self._setRecording()
 		else:
 			self.log("Recording function is already enabled")
 
 	#Method: setOffRecording
 	def setOffRecording(self):
-		if self._recording:
+		if self.isRecording():
 			self._recording = False
 			self._pframe = None
 		else:
@@ -146,69 +183,50 @@ class Camera(threading.Thread):
 	#Method: runRecording
 	def runRecording(self):
 		if self.isRecording():
-			try:
-				message = time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
-				filename = self._r_location + os.path.sep + "photo-cam" + str(self._id).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S%f") + ".png"
-				if self.isRecordingTransitions():
-					drawing = SimpleCV.DrawingLayer((self._pframe.width * 2 + 2, self._pframe.height))
-					drawing.blit(self._pframe)
-					drawing.blit(self._nframe, (self._pframe.width + 2, 0))
-					drawing.line((self._pframe.width + 1, 0), (self._pframe.width + 1, self._pframe.height))
-					cframe = self._pframe.copy().resize(self._nframe.width * 2, self._nframe.height)
-					cframe.addDrawingLayer(drawing)
-					cframe.drawText(message, self._nframe.width * 2 - 130, self._nframe.height - 20, (255, 255, 255), 20)
-					cframe.save(filename)
-				else:
-					self._nframe.drawText(message, self._nframe.width - 130, self._nframe.height - 20, (255, 255, 255), 20)
-					self._nframe.save(filename)
-			except IOError as ioerr:
-				self.log(["Error recording data:", ioerr])
-				self._recording = False
+			if self.isMotionDetected():
+				try:
+					cv2.putText(self._cframe, "CAM " + str(self._id).rjust(2, '0') + " - " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime()),(10, self._cframe.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
+					cv2.imwrite(self._r_location + os.path.sep + "photo-cam" + str(self._id).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S%f") + ".png", self._cframe)
+				except IOError as ioerr:
+					self.log(["Error recording data:", ioerr])
+					self._recording = False
 
-	#Method: setOnRecordingTransitions
-	def setOnRecordingTransitions(self):
-		if not self._r_transitions:
-			self._r_transitions = True
-		else:
-			self.log("Recording transitions function is already enabled")
-
-	#Method: setOffRecordingTransitions
-	def setOffRecordingTransitions(self):
-		if self._r_transitions:
-			self._r_transitions = True
-		else:
-			self.log("Recording transitions function is not enabled")
-
-	#Method: isRecordingTransitions
-	def isRecordingTransitions(self):
-		return self._r_transitions
+	#Method: _setEnableStreaming
+	def _setStreaming(self):
+		try:
+			self._stream = StreamServer(('0.0.0.0', self._s_port), StreamHandler, frame=self.getCurrentFrame(), sleeptime=self.getSleeptime())
+			streamthread = threading.Thread(target = self._stream.serve_forever)
+			streamthread.daemon = True
+			streamthread.start()
+			self.log("Streaming started on " + str(self._stream.server_address))
+			self._streaming = True
+		except IOError as ioerr:
+			self.log(["Error initializing streaming function:", ioerr])
+			self._streaming = False
 
 	#Method: setOnStreaming
 	def setOnStreaming(self):
-		if not self._streaming:
-			try:
-				hostandport = '0.0.0.0:' + str(self._s_port)
-				self._stream = SimpleCV.JpegStreamer(hostandport)
-				self.log("Streaming started on " + hostandport)
-				self._streaming = True
-			except IOError as ioerr:
-				self.log(["Error initializing streaming function:", ioerr])
-				self._streaming = False
+		if not self.isStreaming():
+			self._setStreaming()
 		else:
 			self.log("Streaming function is already enabled")
 
 	#Method: setOffStreaming
 	def setOffStreaming(self):
-		if self._streaming:
+		if self.isStreaming():
 			try:
-				self._stream.server.shutdown()
-				self._stream.server.server_close()
+				self._stream.shutdown()
+				self._stream.server_close()
 				self._stream = None
 				self._streaming = False
 			except IOError as ioerr:
 				self.log(["Error disabling streaming function:", ioerr])
 		else:
 			self.log("Streaming function is not enabled")
+
+	#Method: isStreaming
+	def isStreaming(self):
+		return self._streaming
 
 	#Method: setStreamingPort
 	def setStreamingPort(self, port):
@@ -218,16 +236,12 @@ class Camera(threading.Thread):
 	def getStreamingPort(self):
 		return self._s_port
 
-	#Method: isStreaming
-	def isStreaming(self):
-		return self._streaming
-
 	#Method: runStreaming
 	def runStreaming(self):
 		if self.isStreaming():
 			try:
 				if self._stream is not None:
-					self._nframe.save(self._stream.framebuffer)
+					self._stream.setFrame(self.getCurrentFrame())
 			except IOError as ioerr:
 				self.log(["Error streaming data:", ioerr])
 
@@ -247,14 +261,6 @@ class Camera(threading.Thread):
 	def getRecordingLocation(self):
 		return self._r_location
 
-	#Method: setRecordingBinarize
-	def setRecordingBinarize(self, binarize):
-		self._r_binarize = binarize
-
-	#Method: getRecordingBinarize
-	def getRecordingBinarize(self):
-		return self._r_binarize
-
 	#Method: setRecordingThreshold
 	def setRecordingThreshold(self, threshold):
 		self._r_threshold = threshold
@@ -267,9 +273,11 @@ class Camera(threading.Thread):
 	def stop(self):
 		self._exec = False
 		# Stop recording
-		self.setOffRecording()
+		if self.isRecording():
+			self.setOffRecording()
 		# Stop streaming
-		self.setOffStreaming()
+		if self.isStreaming():
+			self.setOffStreaming()
 		# Stop camera
 		self.setOffCamera()
 		# Stop this thread
@@ -291,6 +299,8 @@ class Camera(threading.Thread):
 						if part is None or part.strip() == '':
 							part = type(obj).__name__
 						message += ' ' + part
+						if __debug__:
+							traceback.print_exc()
 					else:
 						message += ' ' + str(obj)
 				message = message.strip()
@@ -303,62 +313,54 @@ class Camera(threading.Thread):
 		self._exec = True
 		# Run surveillance workflow
 		while self._exec:
-			# Capture image frame
-			self._nframe = self.getImage()
-			# If the streaming is active send the picture through the streaming channel
-			if self.isStreaming():
+			try:
+				# Capture next image frame
+				self._cframe = self._getCapture()
+				# If the streaming is active send the picture through the streaming channel
 				self.runStreaming()
-			# If motion recording feature is active identify motion and save pictures
-			if self.isRecording():
-				# Check if previous image has been captured
-				if self.isMotionDetected():
-					self.runRecording()
-			# Set previous image with the existing capture
-			self._pframe = self._nframe
-			# Sleep for couple of milliseconds and then run again
-			time.sleep( self.getSleeptime() )
-
+				# If motion recording feature is active identify motion and save pictures
+				self.runRecording()
+				# Sleep for couple of seconds or milliseconds
+				time.sleep( self.getSleeptime() )
+			except BaseException as baserr:
+				self.log(["Service error:", baserr])
+				self.stop()
 
 #Class: CmdServer
-class CmdServer:
-	#Global variables
-	_cameras = {}
+class PiCamServerHandler(BaseRequestHandler):
 
 	#Constructor
-	def __init__(self, host="127.0.0.1", port=9079):
-		# Set server host name and port
-		self._host = host
-		self._port = port
-		# Validate host name
-		if self._host is None or self._host == '':
-			self._host = '127.0.0.1'
-		# Validate port
-		if self._port is None or not isinstance(self._port, int) or self._port <= 0:
-			self._port = 9079
-		# Instantiate server execution flag
-		self._exec = False
-		# Instantiate main server connection
-		self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-		# Start binding server connection
+	def __init__(self, request, client_address, server):
+		self._server = server
+		BaseRequestHandler.__init__(self, request, client_address, server)
+
+	#Method: handle
+	def handle(self):
+		# Get client connection
+		self.log("Connection from: " +str(self.client_address))
+		# Receive data from client and process it
+		command = self.request.recv(1024).strip()
+		# Process client requests
 		try:
-			self._socket.bind((self._host, self._port))
-		except IOError as ioerr:
-			self.log(['Server binding failed:', ioerr])
-			sys.exit(2)
-		# Set server connection to accept only 10 connection
-		self._socket.listen(10)
-		self.log("PiCam Server started on " + self.getServerAddress())
-
-	#Method: getServerAddress
-	def getServerAddress(self):
-		return self._host + ":" + str(self._port)
-
-	#Method: stop
-	def stop(self):
-		self._exec = False
+			# Instantiate client structure to detect the action and subject
+			self.log("Receiving command: " + str(command))
+			data = StateData(command)
+			# Action and subject evaluation
+			if data.action == 'stop' and data.subject == 'server':
+				self.runStopServer()
+			if data.action == 'start' and data.subject == 'service':
+				self.runStartService(data.target)
+			if data.action == 'stop' and data.subject == 'service':
+				self.runStopService(data.target)
+			if (data.action == 'set' or data.action == 'enable' or data.action == 'disable') and data.subject == 'property':
+				self.runSetProperty(data)
+			# Send the sign for end of communication
+			self.request.sendall(".")
+		except BaseException as stderr:
+				self.log(["Application error:", stderr])
 
 	#Method: log
-	def log(self, data, socket=None, both=False):
+	def log(self, data, toClient=False):
 		if data is not None:
 			if isinstance(data, list):
 				message = ''
@@ -368,173 +370,198 @@ class CmdServer:
 						if part is None or part.strip() == '':
 							part = type(obj).__name__
 						message += ' ' + part
+						if __debug__:
+							traceback.print_exc()
 					else:
 						message += ' ' + str(obj)
 				message = message.strip()
 			else:
 				message = str(data)
-			if (socket is None) or (socket is not None and both):
-				print "%s | Server > %s" %(time.strftime("%y%m%d%H%M%S", time.localtime()), message)
-			if socket is not None:
-				socket.sendall(message)
-
-	#Method: run
-	def run(self):
-		try:
-			# Mark server execution as started
-			self._exec = True
-			self.log("PiCam has been started and waiting for client requests..")
-			# Run the infinite loop
-			while self._exec:
-				# Get client connection
-				connection, address = self._socket.accept()
-				self.log("Connection from: " +str(address))
-				# Process client request
-				try:
-					# Receive data from client and process it
-					command = connection.recv(1024)
-					if not command:
-						break
-					else:
-						# Instantiate client structure to detect the action and subject
-						self.log("Receiving command: " + str(command))
-						data = CmdData(command)
-						# Action and subject evaluation
-						if data.action == 'stop' and data.subject == 'server':
-							self.runStopServer(connection)
-						if data.action == 'start' and data.subject == 'service':
-							self.runStartService(connection, data.target)
-						if data.action == 'stop' and data.subject == 'service':
-							self.runStopService(connection, data.target)
-						if (data.action == 'set' or data.action == 'enable' or data.action == 'disable') and data.subject == 'property':
-							self.runSetProperty(connection, data)
-						connection.sendall(".")
-					connection.close()
-				except StandardError as stderr:
-					if connection is not None:
-						self.log(["Application error:", stderr], connection, True)
-						connection.close()
-					else:
-						self.log(["Application error:", stderr])
-			# Close connection and log channel
-			self._socket.close()
-		except KeyboardInterrupt:
-			print
-			self.log('Server interrupted by user control')
-			self.runStopServer(None)
-			if self._socket is not None:
-				self._socket.close()
-			sys.exit(2)
-		except BaseException as baserr:
-			self.log(["Server error:", baserr])
-			self.runStopServer(None)
-			if self._socket is not None:
-				self._socket.close()
-			sys.exit(6)
-		self.log("PiCam stopped.")
-		print
-
-	#Method: runStopServer
-	def runStopServer(self, connection):
-		# Stop to receive client request
-		self.log("PiCam Server shutting down", socket=connection, both=True)
-		self.stop()
-		time.sleep(1)
-		# Kill camera's threads
-		if self._cameras:
-			keys = self._cameras.keys()
-			for key in keys:
-				try:
-					self.runStopService(connection, key)
-					time.sleep(1)
-				except BaseException as baserr:
-					self.log(["Error stopping service on camera", key , ":", baserr])
+			# Send message to the standard output
+			print "%s | Server > %s" %(time.strftime("%y%m%d%H%M%S", time.localtime()), message)
+			if toClient:
+				self.request.sendall(message)
 
 	#Method: runStartService
-	def runStartService(self, connection, target):
+	def runStartService(self, target):
 		if target is not None:
-			if target in self._cameras:
-				self.log("Camera " + target + " is already started", socket=connection, both=True)
+			if target in self._server.getCameras():
+				self.log("Camera " + target + " is already started", toClient=True)
 			else:
 				if target is not None:
 					camera = Camera(target)
-					camera.setStreamingPort(self._port + 1 + camera.getId())
+					camera.setStreamingPort(self._server.server_address[1] + 1 + camera.getId())
 					camera.start()
-					self._cameras[target] = camera
-					self.log("Camera " + target + " has been started", socket=connection)
+					self._server.getCameras()[target] = camera
+					self.log("Camera " + target + " has been started")
 				else:
-					self.log("Camera identifier could not be detected", socket=connection, both=True)
+					self.log("Camera identifier could not be detected", toClient=True)
 		else:
-			self.log("Camera identifier was not specified", socket=connection, both=True)
+			self.log("Camera identifier was not specified", toClient=True)
 
 	#Method: runStopService
-	def runStopService(self, connection, target):
+	def runStopService(self, target):
 		if target is not None:
-			if target in self._cameras:
-				camera = self._cameras[target]
+			if target in self._server.getCameras():
+				camera = self._server.getCameras()[target]
 				camera.stop()
-				del camera
-				del self._cameras[target]
-				self.log("Camera " + target + " has been stopped", socket=connection)
+				del self._server.getCameras()[target]
+				self.log("Camera " + target + " has been stopped")
 			else:
-				self.log("Camera " + target + " was not yet started", socket=connection, both=True)
+				self.log("Camera " + target + " was not yet started", toClient=True)
 		else:
-			self.log("Camera could not be identified to stop service", socket=connection, both=True)
+			self.log("Camera could not be identified to stop service", toClient=True)
+
+	#Method: runStopServer
+	def runStopServer(self):
+		self.log("Server shutting down")
+		# Stop camera's threads
+		if self._server.getCameras():
+			keys = self._server.getCameras().keys()
+			for key in keys:
+				try:
+					self.runStopService(key)
+					time.sleep(1)
+				except BaseException as baserr:
+					self.log(["Error stopping service on camera", key , ":", baserr])
+		# Stop server thread
+		self._server.shutdown()
+		self._server.server_close()
+
 
 	#Method: runSetProperty
-	def runSetProperty(self,  connection, data):
+	def runSetProperty(self, data):
 		# Translate enable and disable actions
-		if data.action == data._actions[3]:
+		if data.action == data.getActions()[3]:
 			data.property += " = True"
-		if data.action == data._actions[4]:
+		if data.action == data.getActions()[4]:
 			data.property += " = False"
 		# Ge target camera
-		if data.target in self._cameras:
-			camera = self._cameras[data.target]
+		if data.target in self._server.getCameras():
 			# Translate property expression
-			self.log("Setting '" + data.property + "' on camera " + data.target, socket=connection, both=True)
+			self.log("Setting '" + data.property + "' on camera " + data.target, toClient=True)
+			# Identity target camera
+			camera = self._server.getCameras()[data.target]
+			# Identify property name and property value
 			camprop = data.property.split('=')[0].strip()
 			camdata = data.property.split('=')[1].strip()
 			# Evaluate streaming property
-			if camprop == data._properties[0]:
+			if camprop == data.getProperties()[0]:
 				if str2bool(camdata):
 					camera.setOnStreaming()
 				else:
 					camera.setOffStreaming()
 			# Evaluate recording property
-			elif camprop == data._properties[1]:
+			elif camprop == data.getProperties()[1]:
 				if str2bool(camdata):
 					camera.setOnRecording()
 				else:
 					camera.setOffRecording()
-			# Evaluate recording_transitions property
-			elif camprop == data._properties[2]:
-				if str2bool(camdata):
-					camera.setOnRecordingTransitions()
-				else:
-					camera.setOnRecordingTransitions()
 			# Evaluate resolution property
-			elif camprop == data._properties[3]:
+			elif camprop == data.getProperties()[2]:
 				#todo - set/change camera resolution
 				print
-			# Evaluate binarize property
-			elif camprop == data._properties[4]:
-				camera.setRecordingBinarize(int(camdata))
 			# Evaluate threshold property
-			elif camprop == data._properties[5]:
+			elif camprop == data.getProperties()[3]:
 				camera.setRecordingThreshold(int(camdata))
-			# Evaluate recording_location property
-			elif camprop == data._properties[6]:
+			# Evaluate location property
+			elif camprop == data.getProperties()[4]:
 				camera.setRecordingLocation(str(camdata))
 			# Evaluate sleeptime property
-			elif camprop == data._properties[7]:
+			elif camprop == data.getProperties()[5]:
 				camera.setSleeptime(int(camdata))
 		else:
-			self.log("Camera " + data.target + " is not yet started", socket=connection, both=True)
+			self.log("Camera " + data.target + " is not yet started", toClient=True)
 
 
-#Class: CmdClient
-class CmdClient:
+#Class: PiCamServer
+class PiCamServer(ThreadingMixIn, TCPServer):
+	#Global variables
+	allow_reuse_address = True
+	daemon_threads = True
+	_cameras = {}
+
+	#Constructor
+	def __init__(self, server_address, handler, bind_and_activate=True):
+		TCPServer.__init__(self, server_address, handler, bind_and_activate=bind_and_activate)
+		self._running = True
+
+	#Method: getServerAddress
+	def getServerAddress(self):
+		return self.server_address
+
+	#Method: getCameras
+	def getCameras(self):
+		return self._cameras
+
+	#Method: isRunning
+	def isRunning(self):
+		return self._running
+
+	#Method: shutdown
+	def shutdown(self):
+		self._running = False
+		TCPServer.shutdown(self)
+
+#Class: StreamHandler
+class StreamHandler(BaseHTTPRequestHandler):
+
+	#Constructor
+	def __init__(self, request, client_address, server):
+		self._server = server
+		BaseHTTPRequestHandler.__init__(self, request, client_address, server)
+
+	#Method: do_GET
+	def do_GET(self):
+		try:
+			self.send_response(200)
+			self.wfile.write("Content-Type: multipart/x-mixed-replace; boundary=--aaboundary")
+			self.wfile.write("\r\n\r\n")
+			self.end_headers()
+			while True:
+				imgRGB = cv2.cvtColor(self._server.getFrame(), cv2.COLOR_BGR2RGB)
+				imgJPG = Image.fromarray(imgRGB)
+				tmpFile = StringIO.StringIO()
+				imgJPG.save(tmpFile,'JPEG')
+				self.wfile.write("--jpgboundary")
+				self.wfile.write("Content-type", "image/jpeg")
+				self.wfile.write("Content-Length", str(tmpFile.len))
+				imgJPG.save(self.wfile, 'JPEG')
+				self.wfile.write("\r\n\r\n\r\n")
+				time.sleep(self._server.getTimesleep())
+			return
+		except BaseException as baseerr:
+			self.send_error(500,'PiCam Streaming Server Error: \r\n\r\n%s' % str(baseerr))
+			if __debug__:
+				traceback.print_exc()
+
+
+#Class: StreamServer
+class StreamServer(ThreadingMixIn, HTTPServer):
+	allow_reuse_address = True
+	daemon_threads = True
+
+	#Constructor
+	def __init__(self, server_address, handler, bind_and_activate=True, frame=None, sleeptime=0.05):
+		HTTPServer.__init__(self, server_address, handler, bind_and_activate=bind_and_activate)
+		self._frame = frame
+		self._sleeptime = sleeptime
+
+	#Method: getFrame
+	def getFrame(self):
+		return self._frame
+
+	#Method: getFrame
+	def setFrame(self, frame):
+		self._frame = frame
+
+	#Method: getTimesleep
+	def getTimesleep(self):
+		return self._sleeptime
+
+
+#Class: PiCamClient
+class PiCamClient:
 
 	#Constructor
 	def __init__(self, host='127.0.0.1', port=9079):
@@ -547,6 +574,7 @@ class CmdClient:
 		# Validate port
 		if self._port is None or not isinstance(self._port, int) or self._port <= 0:
 			self._port = 9079
+		self._onlog = True
 
 	#Method: getServerAddress
 	def getServerAddress(self):
@@ -554,44 +582,76 @@ class CmdClient:
 
 	#Method: connect
 	def run(self, command):
+		# Declare server thread in case of the command will start it
+		server = None
 		# Instantiate Data module and parse (validate) input command
 		try:
-			data = CmdData(command)
+			data = StateData(command)
 		except BaseException as baserr:
 			self.log(["Data error:", baserr])
-			sys.exit(1)		
-
-		if data.action == "start" and (data.subject == "server" or data.subject is None):
-			# Start server or client module (depending by the sibject providing in the command line)
-			self.log("PiCam Client is initiating server instance")
-			server = CmdServer(self._host, self._port)
-			server.run()
-		else:
-			# Send command to server
-			self.log("PiCam Client is calling " + client.getServerAddress())
+			sys.exit(1)
+		# Check if input command ask to start server instance
+		if data.action == "start" and data.subject == "server":
+			self.log("Starting PiCam Server instance")
+			server = PiCamServer((self._host, self._port), PiCamServerHandler)
+			serverhread = threading.Thread(target = server.serve_forever)
+			serverhread.daemon = True
+			serverhread.start()
+			# Check if the current command is linked by other to execute the whole chain
+			if data.hasLinkedData():
+				data = data.getLinkedData()
+				self._onlog = False
+			else:
+				data = None
+		# Check if input comment ask to execute a server command
+		while data is not None:
 			try:
+				# Send command to server instance
+				self.log("PiCam Client is calling " + self.getServerAddress())
+				client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+				client.connect((self._host, self._port))
 				# Generate command received from standard input
-				_command = data.getTextCommand()
-				self.log("Sending command: " + _command)
-				_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-				_socket.connect((self._host, self._port))
-				_socket.sendall(_command)
+				command = data.getStatement()
+				self.log("Sending command: " + command)
+				client.sendall(command)
+				# Getting the answer from server
 				while True:
-					_answer = _socket.recv(1024)
-					if _answer != '.' and _answer != '':
-						self.log(_answer, True)
-						if _answer.endswith('.'):
+					answer = client.recv(1024)
+					if answer != '.' and answer != '':
+						self.log(answer, True)
+						if answer.endswith('.'):
 							break
 					else:
 						break
-				_socket.close()
-			except IOError as ioerr:
-				self.log(['Client connection error:', ioerr])
-				sys.exit(1)
+				client.close()
 			except BaseException as baserr:
 				self.log(["Client error:", baserr])
-				sys.exit(1)
-			print
+			finally:
+				#check if the current command is linked by other command
+				if data.hasLinkedData():
+					data = data.getLinkedData()
+				else:
+					data = None
+		# If server has been instantiated in this process wait to finish his execution
+		if server is not None:
+			self._onlog = True
+			while server.isRunning():
+				try:
+					time.sleep(1)
+				except KeyboardInterrupt:
+					print
+					self.log('Interrupting server execution by user control')
+					# Unlock server socket
+					try:
+						_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+						_socket.connect(("localhost", self._port))
+						_socket.sendall("stop server")
+						_socket.close()
+					except:
+						# Nothing to do here
+						self.log("Failed running silent shutdown")
+		# End program execution
+		print "End execution of PiCam.\n"
 
 	#Method: log
 	def log(self, data, server=False):
@@ -604,6 +664,8 @@ class CmdClient:
 						if part is None or part.strip() == '':
 							part = type(obj).__name__
 						message += ' ' + part
+						if __debug__:
+							traceback.print_exc()
 					else:
 						message += ' ' + str(obj)
 				message = message.strip()
@@ -612,27 +674,32 @@ class CmdClient:
 			if not server:
 				print "%s | Client > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), message)
 			else:
-				print "%s | Server > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), message)
+				if self._onlog:
+					print "%s | Server > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), message)
 
 
 #Class: CmdData
-class CmdData:
+class StateData:
 	_actions = ['start', 'stop', 'set', 'enable', 'disable']
 	_subjects = ['server', 'service', 'property']
-	_properties = ['streaming', 'recording', 'recording_transitions', 'resolution', 'binarize', 'threshold', 'recording_location', 'sleeptime']
-	_targetpreps = ['@', 'at', 'on', 'in', 'to']
+	_properties = ['streaming', 'recording', 'resolution', 'threshold', 'location', 'sleeptime']
+	_targetarticles = ['@', 'at', 'on', 'in', 'to']
 
 	#Constructor
-	def __init__(self, command):
+	def __init__(self, statement):
 		self.action = None
 		self.subject = None
 		self.location = None
 		self.property = None
 		self.target = None
 		# Validate input command and parse it
-		if command is not None and command != '':
-			data = command.split(' ')
-			self._parse(data)
+		if statement is not None and statement != '':
+			if ' and ' in statement:
+				self._parse(statement[0:statement.index(' and ')].split(' '))
+				self._link = StateData(statement[statement.index(' and ') + 5:])
+			else:
+				self._parse(statement.split(' '))
+				self._link = None
 		else:
 			raise RuntimeError("Invalid or null client command")
 		# Validate obtained data structure
@@ -659,7 +726,7 @@ class CmdData:
 				del data[0]
 				if self.subject == self._subjects[2]:
 					index = None
-					useprep = list(set(self._targetpreps) & set(data))
+					useprep = list(set(self._targetarticles) & set(data))
 					useaction = list(set(self._actions) & set(data))
 					if useprep:
 						index = data.index(useprep[0])
@@ -674,7 +741,7 @@ class CmdData:
 					if not self.property.split('=')[0].strip() in self._properties:
 						raise RuntimeError("Invalid property: " + self.property.split('=')[0].strip())
 				self._parse(data)
-			elif data[0].strip() in self._targetpreps:
+			elif data[0].strip() in self._targetarticles:
 				del data[0]
 				self.target = '#' + filter(str.isdigit, data[0].strip())
 				del data[0]
@@ -683,7 +750,7 @@ class CmdData:
 				raise RuntimeError("Invalid command part: " + data[0].strip())
 
 	#Method: getTextCommand
-	def getTextCommand(self):
+	def getStatement(self):
 		outcmd = None
 		if self.action is not None and self.subject is not None:
 			outcmd = self.action + " " + self.subject
@@ -699,6 +766,30 @@ class CmdData:
 			return int(filter(str.isdigit, self.target))
 		else:
 			return None
+
+	#Method: hasLinkedData
+	def hasLinkedData(self):
+		return self._link != None
+
+	#Method: getNextData
+	def getLinkedData(self):
+		return self._link
+
+	#Method: getActions
+	def getActions(self):
+		return self._actions
+
+	#Method: getSujects
+	def getSujects(self):
+		return self._subjects
+
+	#Method: getProperties
+	def getProperties(self):
+		return self._properties
+
+	#Method: getArticles
+	def getArticles(self):
+		return self._targetarticles
 
 
 def usage():
@@ -755,7 +846,7 @@ if __name__=="__main__":
 	if command is None or command == '':
 		command = ' '.join(sys.argv[1:])
 	# Instantiate Client module an run the command
-	client = CmdClient(host, port)
+	client = PiCamClient(host, port)
 	client.run(command)
 	# Client normal exist
 	sys.exit(0)
