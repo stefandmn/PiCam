@@ -2,17 +2,15 @@
 
 import os
 import io
-import cv2
+import cv
 import sys
 import time
-import Image
-import numpy
 import socket
 import getopt
 import datetime
-import StringIO
 import threading
 import traceback
+from PIL import Image
 from picamera import PiCamera
 from SocketServer import ThreadingMixIn, BaseRequestHandler, TCPServer
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
@@ -42,11 +40,11 @@ class Camera(threading.Thread):
 		self._r_location = r_location
 		# Initialize class private variables
 		self._exec = False
-		self._pframe = None
-		self._cframe = None
+		self._frame = None
 		# Define tools
 		self._camera = None
 		self._stream = None
+		self._motion = None
 		# Identify type of camera and initialize camera device
 		self.setOnCamera()
 		# Activate recording if was specified during initialization
@@ -75,12 +73,12 @@ class Camera(threading.Thread):
 					if self._framerate is not None:
 						self._camera.framerate = self._framerate
 				else:
-					self._camera = cv2.VideoCapture(self._id - 1)
+					self._camera = cv.CaptureFromCAM(self._id - 1)
 					if self._resolution is not None:
-						self._camera.set(cv2.cv.CV_CAP_PROP_FRAME_WIDTH, self._resolution[0])
-						self._camera.set(cv2.cv.CV_CAP_PROP_FRAME_HEIGHT, self._resolution[1])
+						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_WIDTH, self._resolution[0])
+						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_HEIGHT, self._resolution[1])
 					if self._framerate is not None:
-						self._camera.set(cv2.cv.CV_CAP_PROP_FPS, self._framerate)
+						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FPS, self._framerate)
 			except BaseException as baseerr:
 				self.log(["Error initializing camera service:", baseerr])
 		else:
@@ -102,64 +100,28 @@ class Camera(threading.Thread):
 		else:
 			self.log("Camera service is already stopped")
 
-	#Method: getCurrentFrame
-	def getCurrentFrame(self):
-		return self._cframe
+	#Method: getFrame
+	def getFrame(self):
+		return self._frame
 
-	#Method: getPreviousFrame
-	def getPreviousFrame(self):
-		return self._pframe
-
-	#Method: getImage
-	def _getCapture(self):
+	#Method: setFrame
+	def setFrame(self):
 		if isinstance(self._camera, PiCamera):
-			stream = io.BytesIO()
-			buff = numpy.fromstring(stream.getvalue(), dtype=numpy.uint8)
-			frame = cv2.imdecode(buff, 1)
+			byte_buffer = io.BytesIO()
+			self._camera.capture(byte_buffer, format='jpeg', use_video_port=True)
+			byte_buffer.seek(0)
+			pil = Image.open(byte_buffer)
+			self._frame = cv.CreateImageHeader(self._camera.resolution, cv.IPL_DEPTH_8U, 3)
+			cv.SetData(self._frame, pil.tostring())
+			cv.CvtColor(self._frame, self._frame, cv.CV_RGB2BGR)
 		else:
-			ret, frame = self._camera.read()
-		return frame
-
-	#Method: isMotion
-	def isMotionDetected(self):
-		motion = False
-		if self._cframe is not None:
-			if self._pframe is not None:
-				# convert the frames to grayscale, and blur them
-				frame1 = cv2.cvtColor(self._pframe, cv2.COLOR_BGR2GRAY)
-				frame1 = cv2.GaussianBlur(frame1, (21, 21), 0)
-				frame2 = cv2.cvtColor(self._cframe, cv2.COLOR_BGR2GRAY)
-				frame2 = cv2.GaussianBlur(frame2, (21, 21), 0)
-				# save current frame into the previous one
-				self._pframe = self._cframe
-				# compute the absolute difference between the current frame and first frame
-				frameDelta = cv2.absdiff(frame1, frame2)
-				thresh = cv2.threshold(frameDelta, 25, 255, cv2.THRESH_BINARY)[1]
-				# dilate the thresholded image to fill in holes, then find contours on thresholded image
-				thresh = cv2.dilate(thresh, None, iterations=2)
-				(contours, _) = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-				# loop over the contours
-				for c in contours:
-					# if the contour is too small, ignore it
-					if cv2.contourArea(c) >= self._r_threshold:
-						#mark motion
-						motion = True
-						# compute the bounding box for the contour, draw it on the frame
-						(x, y, w, h) = cv2.boundingRect(c)
-						cv2.rectangle(self._cframe, (x, y), (x + w, y + h), (255, 255, 255), 2)
-		return motion
+			self._frame = cv.QueryFrame(self._camera)
 
 	#Method: _setRecording
 	def _setRecording(self):
-		try:
-			self._cframe = self._pframe = self._getCapture()
-			cv2.putText(self._pframe, "CAM " + str(self._id).rjust(2, '0') + " - Start monitoring @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime()),(10, self._pframe.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
-			cv2.imwrite(self._r_location + os.path.sep + "photo-cam" + str(self._id).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S%f") +".png", self._pframe)
-			self._pframe = self._cframe
-			self._recording = True
-		except IOError as ioerr:
-			self.log(["Error initializing recording function:", ioerr])
-			self._recording = False
+		if self._motion is None:
+			self._motion = Motion(self)
+		self._recording = True
 
 	#Method: setOnRecording
 	def setOnRecording(self):
@@ -172,7 +134,6 @@ class Camera(threading.Thread):
 	def setOffRecording(self):
 		if self.isRecording():
 			self._recording = False
-			self._pframe = None
 		else:
 			self.log("Recording function is not enabled")
 
@@ -182,19 +143,13 @@ class Camera(threading.Thread):
 
 	#Method: runRecording
 	def runRecording(self):
-		if self.isRecording():
-			if self.isMotionDetected():
-				try:
-					cv2.putText(self._cframe, "CAM " + str(self._id).rjust(2, '0') + " - " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime()),(10, self._cframe.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
-					cv2.imwrite(self._r_location + os.path.sep + "photo-cam" + str(self._id).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S%f") + ".png", self._cframe)
-				except IOError as ioerr:
-					self.log(["Error recording data:", ioerr])
-					self._recording = False
+		if self.isRecording() and self._motion is not None:
+			self._motion.detect()
 
-	#Method: _setEnableStreaming
+	#Method: _setStreaming
 	def _setStreaming(self):
 		try:
-			self._stream = StreamServer(('0.0.0.0', self._s_port), StreamHandler, frame=self.getCurrentFrame(), sleeptime=self.getSleeptime())
+			self._stream = StreamServer(('0.0.0.0', self._s_port), StreamHandler, frame=self.getFrame(), sleeptime=self.getSleeptime())
 			streamthread = threading.Thread(target = self._stream.serve_forever)
 			streamthread.daemon = True
 			streamthread.start()
@@ -241,7 +196,7 @@ class Camera(threading.Thread):
 		if self.isStreaming():
 			try:
 				if self._stream is not None:
-					self._stream.setFrame(self.getCurrentFrame())
+					self._stream.setFrame(self.getFrame())
 			except IOError as ioerr:
 				self.log(["Error streaming data:", ioerr])
 
@@ -314,19 +269,109 @@ class Camera(threading.Thread):
 		# Run surveillance workflow
 		while self._exec:
 			try:
-				# Capture next image frame
-				self._cframe = self._getCapture()
-				# If the streaming is active send the picture through the streaming channel
-				self.runStreaming()
+				# Capture next frame
+				self.setFrame()
 				# If motion recording feature is active identify motion and save pictures
 				self.runRecording()
+				# If the streaming is active send the picture through the streaming channel
+				self.runStreaming()
 				# Sleep for couple of seconds or milliseconds
 				time.sleep( self.getSleeptime() )
 			except BaseException as baserr:
 				self.log(["Service error:", baserr])
 				self.stop()
 
-#Class: CmdServer
+#Class: Motion
+class Motion:
+
+	#Constructor
+	def __init__(self, camera):
+		# Set input parameters
+		self._camera = camera
+		# Initialize engine parameters
+		self._frame_diff = None
+		self._frame_gray = None
+		self._frame_avrg = None
+		self._frame_temp = None
+
+	#Method: isRecording
+	def isRecording(self):
+		return self._camera.isRecording()
+
+	#Method: getThreshold
+	def getThreshold(self):
+		return self._camera.getRecordingThreshold()
+
+	#Method: getLocation
+	def getLocation(self):
+		return self._camera.getRecordingLocation()
+
+	#Method: detect
+	def detect(self):
+		# Get camera current frame
+		frame = self._camera.getFrame()
+		if frame is not None:
+			# Smooth to get rid of false positives
+			cv.Smooth(frame, frame, cv.CV_GAUSSIAN, 3, 0)
+			# Check if is needed to initialize the engine
+			if self._frame_avrg is None:
+				self._frame_diff = cv.CloneImage(frame)
+				self._frame_temp = cv.CloneImage(frame)
+				self._frame_gray = cv.CreateImage(cv.GetSize(frame), cv.IPL_DEPTH_8U, 1)
+				self._frame_avrg = cv.CreateImage(cv.GetSize(frame), cv.IPL_DEPTH_32F, 3)
+				cv.ConvertScale(frame, self._frame_avrg, 1.0, 0.0)
+				# Save initial image
+				if self.isRecording():
+					clone = cv.CloneImage(frame)
+					try:
+						cv.PutText(clone, "CAM " + str(self._camera.getId()).rjust(2, '0') + ": Start monitoring @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime()) ,(10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .3, .3, 0.0, 1, cv.CV_AA ), (255, 255, 255))
+						cv.SaveImage(self.getLocation() + os.path.sep + "cam" + str(self._camera.getId()).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S%f") + ".png", clone)
+					except IOError as ioerr:
+						self._camera.log(["Error saving recording data:", ioerr])
+						self._camera._recording = False
+			else:
+				cv.RunningAvg(frame, self._frame_avrg, 0.020, None)
+			# Convert the scale of the moving average.
+			cv.ConvertScale(self._frame_avrg, self._frame_temp, 1.0, 0.0)
+			# Minus the current frame from the moving average.
+			cv.AbsDiff(frame, self._frame_temp, self._frame_diff)
+			# Convert the image to grayscale.
+			cv.CvtColor(self._frame_diff, self._frame_gray, cv.CV_RGB2GRAY)
+			# Convert the image to black and white.
+			cv.Threshold(self._frame_gray, self._frame_gray, 70, 255, cv.CV_THRESH_BINARY)
+			# Dilate and erode to get people blobs
+			cv.Dilate(self._frame_gray, self._frame_gray, None, 18)
+			cv.Erode(self._frame_gray, self._frame_gray, None, 10)
+			# Get contours
+			storage = cv.CreateMemStorage(0)
+			contour = cv.FindContours(self._frame_gray, storage, cv.CV_RETR_CCOMP, cv.CV_CHAIN_APPROX_SIMPLE)
+			# Evaluate contours
+			points = []
+			movementArea = 0
+			while contour:
+				bound_rect = cv.BoundingRect(list(contour))
+				contour = contour.h_next()
+				# Compute the bounding points to the boxes that will be drawn on the screen
+				pt1 = (bound_rect[0], bound_rect[1])
+				pt2 = (bound_rect[0] + bound_rect[2], bound_rect[1] + bound_rect[3])
+				# Add this latest bounding box to the overall area that is being detected as movement
+				movementArea += ((pt2[0] - pt1[0]) * (pt2[1] - pt1[1]))
+				points.append(pt1)
+				points.append(pt2)
+				# Draw the contours
+				cv.Rectangle(frame, pt1, pt2, cv.CV_RGB(255, 0, 0), 1)
+			# Check if it's about movement and save the frame
+			if self.isRecording() and movementArea > self.getThreshold():
+				clone = cv.CloneImage(frame)
+				try:
+					cv.PutText(clone, "CAM " + str(self._camera.getId()).rjust(2, '0') + ": Motion detected @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime()) ,(10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .3, .3, 0.0, 1, cv.CV_AA ), (255, 255, 255))
+					cv.SaveImage(self.getLocation() + os.path.sep + "cam" + str(self._camera.getId()).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S%f") + ".png", clone)
+				except IOError as ioerr:
+					self._camera.log(["Error saving recording data:", ioerr])
+					self._camera._recording = False
+
+
+#Class: PiCamServerHandler
 class PiCamServerHandler(BaseRequestHandler):
 
 	#Constructor
@@ -515,19 +560,23 @@ class StreamHandler(BaseHTTPRequestHandler):
 	def do_GET(self):
 		try:
 			self.send_response(200)
-			self.wfile.write("Content-Type: multipart/x-mixed-replace; boundary=--aaboundary")
-			self.wfile.write("\r\n\r\n")
+			self.send_header("Connection", "close")
+			self.send_header("Max-Age", "0")
+			self.send_header("Expires", "0")
+			self.send_header("Cache-Control", "no-cache, private")
+			self.send_header("Pragma", "no-cache")
+			self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=--BOUNDARYSTRING")
 			self.end_headers()
 			while True:
-				imgRGB = cv2.cvtColor(self._server.getFrame(), cv2.COLOR_BGR2RGB)
-				imgJPG = Image.fromarray(imgRGB)
-				tmpFile = StringIO.StringIO()
-				imgJPG.save(tmpFile,'JPEG')
-				self.wfile.write("--jpgboundary")
-				self.wfile.write("Content-type", "image/jpeg")
-				self.wfile.write("Content-Length", str(tmpFile.len))
-				imgJPG.save(self.wfile, 'JPEG')
-				self.wfile.write("\r\n\r\n\r\n")
+				if self._server.getFrame() is None:
+					continue
+				JpegData = cv.EncodeImage(".jpeg", self._server.getFrame(), (cv.CV_IMWRITE_JPEG_QUALITY,75)).tostring()
+				self.wfile.write("--BOUNDARYSTRING\r\n")
+				self.send_header("Content-type", "image/jpeg")
+				self.send_header("Content-Length", str(len(JpegData)))
+				self.end_headers()
+				self.wfile.write(JpegData)
+				self.wfile.write("\r\n")
 				time.sleep(self._server.getTimesleep())
 			return
 		except BaseException as baseerr:
