@@ -862,6 +862,8 @@ In order to run server or client modules use the syntax:
 	> picam -c "set parameter resolution=1280,720 on c1" -h "192.168.0.100" -p 6400
 	> picam --command="set parameter resolution=1280,720 on c1" --host="127.0.0.1" --port=6400
 = run client that will send the command described by a specific option to a dedicated server
+	> picam "start server and start service on #0 and enable property streaming on #0 and enable property recording on #0"
+= this is a composed command (by 'and' operator) which can start the server, camera #0 and other. This kind of composed command could be run directly when you start the server or you can executed from client
 	"""
 
 def str2bool(v):
