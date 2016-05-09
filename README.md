@@ -37,7 +37,7 @@ With three elements you can compose any command - specifying them in any order -
         or
 `service start on #0`
         or
-`on #1 start service` 
+`on #1 start service`
 
 In order to execute more commands through one single client call you can concatenate them using **and** operator.
 
