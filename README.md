@@ -48,9 +48,9 @@ if anyone wants to use this application should perform the following steps:
 1. Download `picam.py` file and store somewhere on the file system
 2. (Optional) Add *execute* permission to this file: `chmox +x pycam.py`
 3. Install prerequisites
-3.1. `sudo apt-get update`
-3.2. `sudo apt-get install python-pip python-opencv python-picamera ipython` 
-3.3. `sudo apt-get install python-scipy python-numpy python-pygame python-setuptools`
+3.1. Update repository: `sudo apt-get update`
+3.2. Install first set of packages: `sudo apt-get install python-pip python-opencv python-picamera ipython` 
+3.2. Install second set of packages: `sudo apt-get install python-scipy python-numpy python-pygame python-setuptools`
 4. Open a shell console and execute the following command: `pycam.py "start server and start service on #1 or enable property streaming on #1"`. In case you have attached a Pi camera replace `#1` with `#0`
 5. Open a browser and check `http://RPiHostOrIP:9081` for USB camera or `http://RPiHostOrIP:9080` for Pi camera
 6. Open another shell console and execute 
