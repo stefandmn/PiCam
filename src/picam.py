@@ -1,5 +1,17 @@
 #!/usr/bin/python
 
+__name__		= "PiCam"
+__project__		= "Clue"
+__author__		= "SDA"
+__copyright__	= "Copyright (C) 2015-2016, AMSD"
+__license__		= "GPL"
+__version__		= "1.1"
+__maintainer__	= "SDA"
+__email__		= "damian.stefan@gmail.com"
+__status__		= "Production"
+__verbose__		= False
+
+
 import os
 import io
 import cv
@@ -254,7 +266,7 @@ class Camera(threading.Thread):
 						if part is None or part.strip() == '':
 							part = type(obj).__name__
 						message += ' ' + part
-						if __debug__:
+						if __verbose__:
 							traceback.print_exc()
 					else:
 						message += ' ' + str(obj)
@@ -402,7 +414,9 @@ class PiCamServerHandler(BaseRequestHandler):
 			# Send the sign for end of communication
 			self.request.sendall(".")
 		except BaseException as stderr:
-				self.log(["Application error:", stderr])
+			self.log(["Application error:", stderr])
+			if __verbose__:
+				traceback.print_exc()
 
 	#Method: log
 	def log(self, data, toClient=False):
@@ -415,7 +429,7 @@ class PiCamServerHandler(BaseRequestHandler):
 						if part is None or part.strip() == '':
 							part = type(obj).__name__
 						message += ' ' + part
-						if __debug__:
+						if __verbose__:
 							traceback.print_exc()
 					else:
 						message += ' ' + str(obj)
@@ -581,7 +595,7 @@ class StreamHandler(BaseHTTPRequestHandler):
 			return
 		except BaseException as baseerr:
 			self.send_error(500,'PiCam Streaming Server Error: \r\n\r\n%s' % str(baseerr))
-			if __debug__:
+			if __verbose__:
 				traceback.print_exc()
 
 
@@ -713,7 +727,7 @@ class PiCamClient:
 						if part is None or part.strip() == '':
 							part = type(obj).__name__
 						message += ' ' + part
-						if __debug__:
+						if __verbose__:
 							traceback.print_exc()
 					else:
 						message += ' ' + str(obj)
