@@ -103,9 +103,8 @@ class Camera(threading.Thread):
 				# For PiCamera call close method
 				if isinstance(self._camera, PiCamera):
 					self._camera.close()
-				else:
-					self._camera.release()
 				# Destroy Camera instance
+				del self._camera
 				self._camera = None
 			except BaseException as baseerr:
 				self.log(["Error stopping camera service:", baseerr])
