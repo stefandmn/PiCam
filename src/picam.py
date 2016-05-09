@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
-__name__		= "PiCam"
 __project__		= "Clue"
+__module__		= "PiCam"
 __author__		= "SDA"
 __copyright__	= "Copyright (C) 2015-2016, AMSD"
 __license__		= "GPL"
