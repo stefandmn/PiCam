@@ -2,7 +2,7 @@
 
 __project__     = "Clue"
 __module__      = "PiCam"
-__author__	    = "SDA"
+__author__      = "SDA"
 __copyright__   = "Copyright (C) 2015-2016, AMSD"
 __license__     = "GPL"
 __version__     = "1.1"
