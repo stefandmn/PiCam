@@ -27,10 +27,11 @@ In case you want to secure the access of PiCam server and to allow clients to ru
 If one of these parameters are used (to specify the interface or the server port) the input command have to be specified using `-c` or `--command` options.
 
 The commands accepted by PiCam client and server components have been defined around to a simple grammar that should contain only three elements:
-- **subject** - accepted values are: 'server', 'service', 'property'
-- **action** (verbs) - the used values are: 'start', 'stop', 'set', 'enable', 'disable'
-- **properties** (or complements) - possible values are: 'streaming', 'recording', 'resolution', 'threshold', 'location', 'sleeptime'
-- **articles** - accepted values are: 'to', 'at', 'on', 'in', '@'. After the article you have to specify the camera target (#0, #1, .. - so the camera target is the camera index having '#' prefix)
+- **subject** - accepted values are: **server**, **service**, **property**
+- **action** (verbs) - the used values are: **start**, **stop**, **set**, **enable**, **disable**
+- **properties** (or complements) - possible values are: **streaming**, **recording**, **resolution**, **threshold**, **location**, **sleeptime**
+- **articles** - accepted values are: **to**, **at**, **on**, **in**, **@**. After the article you have to specify the camera target (#0, #1, .. - so the camera target is the camera index having `#` prefix).
+
 With three elements you can compose any command - specifying them in any order - that could be run in client interface. For instance if you want to start the Pi camera you can define and run one of the following commands:
     `start service on #0`
         or

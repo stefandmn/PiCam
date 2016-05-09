@@ -31,7 +31,7 @@ from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 #Class: Camera
 class Camera(threading.Thread):
 	def __init__(self, c_id, c_resolution=None, c_framerate=None,
-				streaming=False, s_port=9080, s_sleeptime=0.1,
+				streaming=False, s_port=9080, s_sleeptime=0.05,
 				recording=False, r_threshold=500, r_location='/tmp'):
 		# Validate camera id input parameter
 		if c_id is not None and str(c_id).startswith('#'):
