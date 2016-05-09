@@ -1,15 +1,15 @@
 #!/usr/bin/python
 
-__project__		= "Clue"
-__module__		= "PiCam"
-__author__		= "SDA"
-__copyright__	= "Copyright (C) 2015-2016, AMSD"
-__license__		= "GPL"
-__version__		= "1.1"
-__maintainer__	= "SDA"
-__email__		= "damian.stefan@gmail.com"
-__status__		= "Production"
-__verbose__		= False
+__project__     = "Clue"
+__module__      = "PiCam"
+__author__	    = "SDA"
+__copyright__   = "Copyright (C) 2015-2016, AMSD"
+__license__     = "GPL"
+__version__     = "1.1"
+__maintainer__  = "SDA"
+__email__       = "damian.stefan@gmail.com"
+__status__      = "Production"
+__verbose__     = False
 
 
 import os
