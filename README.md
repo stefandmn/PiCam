@@ -38,6 +38,7 @@ With three elements you can compose any command - specifying them in any order -
 `service start on #0`
         or
 `on #1 start service` 
-In order to execute more command through one single client call you can concatenate many command with **and** operator.
+
+In order to execute more commands through one single client call you can concatenate them using **and** operator.
 
 For more details please run `picam.py --help`
