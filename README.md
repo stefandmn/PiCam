@@ -33,11 +33,11 @@ The commands accepted by PiCam client and server components have been defined ar
 - **articles** - accepted values are: **to**, **at**, **on**, **in**, **@**. After the article you have to specify the camera target (#0, #1, .. - so the camera target is the camera index having `#` prefix).
 
 With three elements you can compose any command - specifying them in any order - that could be run in client interface. For instance if you want to start the Pi camera you can define and run one of the following commands:
-    `start service on #0`
+`start service on #0`
         or
-    `service start on #0`
+`service start on #0`
         or
-    `on #1 start service` 
+`on #1 start service` 
 In order to execute more command through one single client call you can concatenate many command with **and** operator.
 
 For more details please run `picam.py --help`
