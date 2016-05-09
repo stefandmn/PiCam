@@ -49,5 +49,5 @@ if anyone wants to use this application should perform the following steps:
 5. Open a browser and check `http://RPiHostOrIP:9081` for USB camera or `http://RPiHostOrIP:9080` for Pi camera
 6. Open another shell console and execute 
 7. (Optional) if you have a second USB camera execute the follwing command: `pycam.py "start service on #2 or enable property streaming on #2"`
-8. (Optional) If you want to run first camera with motion detection you have to execute the following command: `pycam.py "enable property recording on #1"`. **Attention!** it will store image samples in /tmp. 
-9 (Optional) If you want to change the default location where the motion detection samples are store execute the following command: `pycam.py "set property location=/mnt/data on #1"`.
+8. (Optional) If you want to run first camera with motion detection you have to execute the following command: `pycam.py "enable property recording on #1"`. **Attention!** it will store image samples in `/tmp`. 
+9. (Optional) If you want to change the default location where the motion detection samples are store execute the following command: `pycam.py "set property location=/mnt/data on #1"`.
