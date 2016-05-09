@@ -42,7 +42,7 @@ If you want to start to use this application you have to perform the following s
 2. (Optional) Add _execute_ permission to this file: `chmox +x pycam.py`
 3. Install prerequisites: `sudo apt-get update && sudo apt-get install python-pip python-opencv python-picamera ipython python-scipy python-numpy python-pygame python-setuptools` 
 4. Open a shell console and execute the following command to start the server and also one of the cameras (including streaming service): `pycam.py "start server and start service on #1 or enable property streaming on #1"`. In case you have attached a Pi camera replace `#1` with `#0`
-5. Open a browser and check `http://RPiHostnameOrIPAddress:9081` for USB camera or `http://RPiHostnameOrIPAddress:9080` for Pi camera
+5. Open a browser and check `http://RPiHostname:9081` for USB camera or `http://RPiHostname:9080` for Pi camera
 6. (Optional) If you want to start the second USB camera you have to execute the following command: `pycam.py "start service on #2 or enable property streaming on #2"`
 7. (Optional) If you want to run motion detection for the first camera you need to open another shell console and to execute the following command: `pycam.py "enable property recording on #1"`. **Attention!** it will store image samples in `/tmp` folder. 
 8. (Optional) If you want to change the default location where the motion detection samples are store execute the following command: `pycam.py "set property location=/mnt/data on #1"`.
