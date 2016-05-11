@@ -32,7 +32,7 @@ from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 class Camera(threading.Thread):
 	def __init__(self, c_id, c_resolution=None, c_framerate=None,
 				streaming=False, s_port=9080, s_sleeptime=0.05,
-				recording=False, r_threshold=500, r_location='/tmp'):
+				recording=False, r_threshold=1000, r_location='/tmp'):
 		# Validate camera id input parameter
 		if c_id is not None and str(c_id).startswith('#'):
 			c_id = int(filter(str.isdigit, c_id))
@@ -52,6 +52,7 @@ class Camera(threading.Thread):
 		self._r_location = r_location
 		# Initialize class private variables
 		self._exec = False
+		self._lock = True
 		self._frame = None
 		# Define tools
 		self._camera = None
@@ -78,6 +79,7 @@ class Camera(threading.Thread):
 	def setOnCamera(self):
 		if self._camera is None:
 			try:
+				self._lock = True
 				if self._id == 0:
 					self._camera = PiCamera()
 					if self._resolution is not None:
@@ -91,6 +93,7 @@ class Camera(threading.Thread):
 						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_HEIGHT, self._resolution[1])
 					if self._framerate is not None:
 						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FPS, self._framerate)
+				self._lock = False
 			except BaseException as baseerr:
 				self.log(["Error initializing camera service:", baseerr])
 		else:
@@ -100,6 +103,7 @@ class Camera(threading.Thread):
 	def setOffCamera(self):
 		if self._camera is not None:
 			try:
+				self._lock = True
 				# For PiCamera call close method
 				if isinstance(self._camera, PiCamera):
 					self._camera.close()
@@ -117,16 +121,17 @@ class Camera(threading.Thread):
 
 	#Method: setFrame
 	def setFrame(self):
-		if isinstance(self._camera, PiCamera):
-			byte_buffer = io.BytesIO()
-			self._camera.capture(byte_buffer, format='jpeg', use_video_port=True)
-			byte_buffer.seek(0)
-			pil = Image.open(byte_buffer)
-			self._frame = cv.CreateImageHeader(self._camera.resolution, cv.IPL_DEPTH_8U, 3)
-			cv.SetData(self._frame, pil.tostring())
-			cv.CvtColor(self._frame, self._frame, cv.CV_RGB2BGR)
-		else:
-			self._frame = cv.QueryFrame(self._camera)
+		if not self._lock and self._camera is not None:
+			if isinstance(self._camera, PiCamera):
+				byte_buffer = io.BytesIO()
+				self._camera.capture(byte_buffer, format='jpeg', use_video_port=True)
+				byte_buffer.seek(0)
+				pil = Image.open(byte_buffer)
+				self._frame = cv.CreateImageHeader(self._camera.resolution, cv.IPL_DEPTH_8U, 3)
+				cv.SetData(self._frame, pil.tostring())
+				cv.CvtColor(self._frame, self._frame, cv.CV_RGB2BGR)
+			else:
+				self._frame = cv.QueryFrame(self._camera)
 
 	#Method: _setRecording
 	def _setRecording(self):
@@ -161,7 +166,7 @@ class Camera(threading.Thread):
 	def _setStreaming(self):
 		try:
 			self._stream = StreamServer(('0.0.0.0', self._s_port), StreamHandler, frame=self.getFrame(), sleeptime=self.getSleeptime())
-			streamthread = threading.Thread(target = self._stream.serve_forever)
+			streamthread = threading.Thread(target=self._stream.serve_forever)
 			streamthread.daemon = True
 			streamthread.start()
 			self.log("Streaming started on " + str(self._stream.server_address))
@@ -202,6 +207,39 @@ class Camera(threading.Thread):
 	def getStreamingPort(self):
 		return self._s_port
 
+	#Method: setOnCamera
+	def setResolution(self, resolution):
+		if self._camera is not None and resolution is not None:
+			try:
+				self._lock = True
+				# Set value
+				self._resolution = (int(resolution.split(',')[0].strip()), int(resolution.split(',')[1].strip()))
+				# Configure camera
+				if isinstance(self._camera, PiCamera):
+					self._camera.resolution = self._resolution
+				else:
+					cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_WIDTH, self._resolution[0])
+					cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_HEIGHT, self._resolution[1])
+				self._lock = False
+			except BaseException as baseerr:
+				self.log(["Error setting camera resolution:", baseerr])
+
+	#Method: setFramerate
+	def setFramerate(self, framerate):
+		if self._camera is not None and framerate is not None:
+			try:
+				self._lock = True
+				# Set value
+				self._framerate = int(framerate)
+				# Configure camera
+				if isinstance(self._camera, PiCamera):
+					self._camera.framerate = self._framerate
+				else:
+					cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FPS, self._framerate)
+				self._lock = False
+			except BaseException as baseerr:
+				self.log(["Error setting camera framerate:", baseerr])
+
 	#Method: runStreaming
 	def runStreaming(self):
 		if self.isStreaming():
@@ -214,6 +252,8 @@ class Camera(threading.Thread):
 	#Method: setSleeptime
 	def setSleeptime(self, sleeptime):
 		self._s_sleeptime = sleeptime
+		if self._stream is not None:
+			self._stream.setTimesleep(sleeptime)
 
 	#Method: getSleeptime
 	def getSleeptime(self):
@@ -336,7 +376,7 @@ class Motion:
 					clone = cv.CloneImage(frame)
 					try:
 						cv.PutText(clone, "CAM " + str(self._camera.getId()).rjust(2, '0') + ": Start monitoring @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime()) ,(10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .3, .3, 0.0, 1, cv.CV_AA ), (255, 255, 255))
-						cv.SaveImage(self.getLocation() + os.path.sep + "cam" + str(self._camera.getId()).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S%f") + ".png", clone)
+						cv.SaveImage(self.getLocation() + os.path.sep + "cam" + str(self._camera.getId()).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f") + ".png", clone)
 					except IOError as ioerr:
 						self._camera.log(["Error saving recording data:", ioerr])
 						self._camera._recording = False
@@ -375,8 +415,8 @@ class Motion:
 			if self.isRecording() and movementArea > self.getThreshold():
 				clone = cv.CloneImage(frame)
 				try:
-					cv.PutText(clone, "CAM " + str(self._camera.getId()).rjust(2, '0') + ": Motion detected @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime()) ,(10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .3, .3, 0.0, 1, cv.CV_AA ), (255, 255, 255))
-					cv.SaveImage(self.getLocation() + os.path.sep + "cam" + str(self._camera.getId()).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S%f") + ".png", clone)
+					cv.PutText(clone, "CAM " + str(self._camera.getId()).rjust(2, '0') + ": Motion detected @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime()),(10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .3, .3, 0.0, 1, cv.CV_AA ), (255, 255, 255))
+					cv.SaveImage(self.getLocation() + os.path.sep + "cam" + str(self._camera.getId()).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f") + "-" + str(movementArea) + ".png", clone)
 				except IOError as ioerr:
 					self._camera.log(["Error saving recording data:", ioerr])
 					self._camera._recording = False
@@ -436,9 +476,10 @@ class PiCamServerHandler(BaseRequestHandler):
 			else:
 				message = str(data)
 			# Send message to the standard output
-			print "%s | Server > %s" %(time.strftime("%y%m%d%H%M%S", time.localtime()), message)
 			if toClient:
 				self.request.sendall(message)
+			else:
+				print "%s | Server > %s" %(time.strftime("%y%m%d%H%M%S", time.localtime()), message)
 
 	#Method: runStartService
 	def runStartService(self, target):
@@ -451,7 +492,7 @@ class PiCamServerHandler(BaseRequestHandler):
 					camera.setStreamingPort(self._server.server_address[1] + 1 + camera.getId())
 					camera.start()
 					self._server.getCameras()[target] = camera
-					self.log("Camera " + target + " has been started")
+					self.log("Camera " + target + " has been started", toClient=True)
 				else:
 					self.log("Camera identifier could not be detected", toClient=True)
 		else:
@@ -464,7 +505,7 @@ class PiCamServerHandler(BaseRequestHandler):
 				camera = self._server.getCameras()[target]
 				camera.stop()
 				del self._server.getCameras()[target]
-				self.log("Camera " + target + " has been stopped")
+				self.log("Camera " + target + " has been stopped", toClient=True)
 			else:
 				self.log("Camera " + target + " was not yet started", toClient=True)
 		else:
@@ -517,8 +558,7 @@ class PiCamServerHandler(BaseRequestHandler):
 					camera.setOffRecording()
 			# Evaluate resolution property
 			elif camprop == data.getProperties()[2]:
-				#todo - set/change camera resolution
-				print
+				camera.setResolution(camdata)
 			# Evaluate threshold property
 			elif camprop == data.getProperties()[3]:
 				camera.setRecordingThreshold(int(camdata))
@@ -620,6 +660,10 @@ class StreamServer(ThreadingMixIn, HTTPServer):
 	#Method: getTimesleep
 	def getTimesleep(self):
 		return self._sleeptime
+
+	#Method: setTimesleep
+	def setTimesleep(self, sleeptime):
+		self._sleeptime = sleeptime
 
 
 #Class: PiCamClient
