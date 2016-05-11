@@ -568,6 +568,9 @@ class PiCamServerHandler(BaseRequestHandler):
 			# Evaluate sleeptime property
 			elif camprop == data.getProperties()[5]:
 				camera.setSleeptime(int(camdata))
+			# Evaluate framerate property
+			elif camprop == data.getProperties()[6]:
+				camera.setFramerate(camdata)
 		else:
 			self.log("Camera " + data.target + " is not yet started", toClient=True)
 
@@ -788,7 +791,7 @@ class PiCamClient:
 class StateData:
 	_actions = ['start', 'stop', 'set', 'enable', 'disable']
 	_subjects = ['server', 'service', 'property']
-	_properties = ['streaming', 'recording', 'resolution', 'threshold', 'location', 'sleeptime']
+	_properties = ['streaming', 'recording', 'resolution', 'threshold', 'location', 'sleeptime', 'framerate']
 	_targetarticles = ['@', 'at', 'on', 'in', 'to']
 
 	#Constructor

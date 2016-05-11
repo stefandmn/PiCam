@@ -26,7 +26,7 @@ If one of these parameters are used (to specify the interface or the server port
 The commands accepted by PiCam client and server components have been defined around to a simple grammar that contains only three elements:
 - **subject** - accepted values are: **server**, **service**, **property**
 - **action** (verbs) - the used values are: **start**, **stop**, **set**, **enable**, **disable**
-- **properties** (or complements) - possible values are: **streaming**, **recording**, **resolution**, **threshold**, **location**, **sleeptime**
+- **properties** (or complements) - possible values are: **streaming**, **recording**, **resolution**, **threshold**, **location**, **sleeptime**, **framerate**
 - **articles** - accepted values are: **to**, **at**, **on**, **in**, **@**. After the article you have to specify the camera target (#0, #1, .. - so the camera target is the camera index having `#` prefix).
 
 With three elements you can compose any command (the order of elements is arbitrary) that could run in client interface. For instance if you want to start the Pi camera you can define and run one of the following commands:
