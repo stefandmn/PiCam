@@ -132,6 +132,7 @@ class Camera(threading.Thread):
 				cv.CvtColor(self._frame, self._frame, cv.CV_RGB2BGR)
 			else:
 				self._frame = cv.QueryFrame(self._camera)
+			cv.PutText(self._frame, "CAM " + str(self.getId()).rjust(2, '0'),(5, 15), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .3, .3, 0.0, 1, cv.CV_AA ), (255, 255, 255))
 
 	#Method: _setRecording
 	def _setRecording(self):
@@ -212,6 +213,8 @@ class Camera(threading.Thread):
 		if self._camera is not None and resolution is not None:
 			try:
 				self._lock = True
+				# Wait 1 second for the usecase when the resolution is set in the same time with the camera start
+				time.sleep(1)
 				# Set value
 				self._resolution = (int(resolution.split(',')[0].strip()), int(resolution.split(',')[1].strip()))
 				# Configure camera
@@ -375,7 +378,7 @@ class Motion:
 				if self.isRecording():
 					clone = cv.CloneImage(frame)
 					try:
-						cv.PutText(clone, "CAM " + str(self._camera.getId()).rjust(2, '0') + ": Start monitoring @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime()) ,(10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .3, .3, 0.0, 1, cv.CV_AA ), (255, 255, 255))
+						cv.PutText(clone, "Start monitoring @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime()) ,(10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .3, .3, 0.0, 1, cv.CV_AA ), (255, 255, 255))
 						cv.SaveImage(self.getLocation() + os.path.sep + "cam" + str(self._camera.getId()).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f") + ".png", clone)
 					except IOError as ioerr:
 						self._camera.log(["Error saving recording data:", ioerr])
@@ -415,7 +418,7 @@ class Motion:
 			if self.isRecording() and movementArea > self.getThreshold():
 				clone = cv.CloneImage(frame)
 				try:
-					cv.PutText(clone, "CAM " + str(self._camera.getId()).rjust(2, '0') + ": Motion detected @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime()),(10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .3, .3, 0.0, 1, cv.CV_AA ), (255, 255, 255))
+					cv.PutText(clone, "Motion detected @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime()),(10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .3, .3, 0.0, 1, cv.CV_AA ), (255, 255, 255))
 					cv.SaveImage(self.getLocation() + os.path.sep + "cam" + str(self._camera.getId()).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f") + "-" + str(movementArea) + ".png", clone)
 				except IOError as ioerr:
 					self._camera.log(["Error saving recording data:", ioerr])
@@ -567,7 +570,7 @@ class PiCamServerHandler(BaseRequestHandler):
 				camera.setRecordingLocation(str(camdata))
 			# Evaluate sleeptime property
 			elif camprop == data.getProperties()[5]:
-				camera.setSleeptime(int(camdata))
+				camera.setSleeptime(float(camdata))
 			# Evaluate framerate property
 			elif camprop == data.getProperties()[6]:
 				camera.setFramerate(camdata)
