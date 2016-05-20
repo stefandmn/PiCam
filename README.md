@@ -22,6 +22,7 @@ Because this application is able to control both USB and Pi cameras it is was de
 When the PiCam server is started by default will use **9079** TCP port. In case you want to specify a specific port you have to use `-p` or `--port` options (the last one is considered the long option which needs an argument be followed by an equal sign ('=')). The streaming ports will be selected by PiCam server component, starting from server PCT port and increment it for each camera (considering camera index)
 In case you want to secure the access of PiCam server and to allow clients to run only from the local host you can specify the interface name using `-h` or `--host` options. By default the server starts on _loopback_ interface so the clients could be instantiated only from service host.
 If one of these parameters are used (to specify the interface or the server port) the input command have to be specified using `-c` or `--command` options.
+if you want to start the client/server application using a configuration file you have to specify one of these options: `-f` or `--file` with the valid file path. The configuration should include commands separated by end of line. Comment lines could be specified by prefixing the line with `#` character. Empty lines are ignored.
 
 The commands accepted by PiCam client and server components have been defined around to a simple grammar that contains only three elements:
 - **subject** - accepted values are: **server**, **service**, **property**
