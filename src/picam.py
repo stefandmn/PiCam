@@ -5,7 +5,7 @@ __module__      = "PiCam"
 __author__      = "SDA"
 __copyright__   = "Copyright (C) 2015-2016, AMSD"
 __license__     = "GPL"
-__version__     = "1.1"
+__version__     = "1.1.2"
 __maintainer__  = "SDA"
 __email__       = "damian.stefan@gmail.com"
 __status__      = "Production"
@@ -132,7 +132,7 @@ class Camera(threading.Thread):
 				cv.CvtColor(self._frame, self._frame, cv.CV_RGB2BGR)
 			else:
 				self._frame = cv.QueryFrame(self._camera)
-			cv.PutText(self._frame, "CAM " + str(self.getId()).rjust(2, '0'),(5, 15), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .3, .3, 0.0, 1, cv.CV_AA ), (255, 255, 255))
+			cv.PutText(self._frame, "CAM " + str(self.getId()).rjust(2, '0'),(5, 15), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .35, .35, 0.0, 1, cv.CV_AA), (255, 255, 255))
 
 	#Method: _setRecording
 	def _setRecording(self):
@@ -906,7 +906,7 @@ class StateData:
 
 def usage():
 	print """
-Usage: picam -c "start server" -h "localhost" -p 9079
+Usage: picam -c "start server" [-f ./picam.cfg] -h "localhost" -p 9079
 
 In order to run server or client modules use the syntax:
 	> picam -c "start server"
@@ -927,6 +927,8 @@ In order to run server or client modules use the syntax:
 = run client that will send the command described by a specific option to a dedicated server
 	> picam "start server and start service on #0 and enable property streaming on #0 and enable property recording on #0"
 = this is a composed command (by 'and' operator) which can start the server, camera #0 and other. This kind of composed command could be run directly when you start the server or you can executed from client
+	> picam -f /opt/clue/etc/picam.cfg
+= run picam application using a configuration file (a file with commands), able to start the server or to run specific client actions
 	"""
 
 def str2bool(v):
@@ -941,14 +943,17 @@ def str2bool(v):
 if __name__=="__main__":
 	# Global variables to identify input parameters
 	command = None
+	file = None
 	host = None
 	port = None
 	# Parse input parameters
-	opts, args = getopt.getopt(sys.argv[1:], "c:h:p", ["command=", "host=", "port=", "help"])
+	opts, args = getopt.getopt(sys.argv[1:], "c:f:h:p", ["command=", "file=", "host=", "port=", "help"])
 	# Collect input parameters
 	for opt, arg in opts:
 		if opt in ("-c", "--command"):
 			command = arg
+		elif opt in ("-f", "--file"):
+			file = arg
 		elif opt in ("-h", "--host"):
 			host = arg
 		elif opt in ("-p", "--port"):
@@ -957,8 +962,19 @@ if __name__=="__main__":
 			usage()
 			sys.exit(0)
 	# Validate command: if command was not specified through input options collect all input parameters and aggregate them in one single command
-	if command is None or command == '':
+	if (command is None or command == '') and file is None and host is None and port is None:
 		command = ' '.join(sys.argv[1:])
+	# Check if a configuration file has been specified read it ang get all commands defined in
+	if file is not None and os.path.isfile(file):
+		cfgfile = open(file, 'r')
+		cfglines = cfgfile.readlines()
+		cfgfile.close()
+		for cmdline in cfglines:
+			if cmdline.strip() != '' and not cmdline.strip().startswith('#'):
+				if command is not None:
+					command += ' and ' + cmdline.strip()
+				else:
+					command = cmdline.strip()
 	# Instantiate Client module an run the command
 	client = PiCamClient(host, port)
 	client.run(command)
