@@ -5,10 +5,9 @@ __module__      = "PiCam"
 __author__      = "SDA"
 __copyright__   = "Copyright (C) 2015-2016, AMSD"
 __license__     = "GPL"
-__version__     = "1.1.2"
+__version__     = "1.1.3"
 __maintainer__  = "SDA"
 __email__       = "damian.stefan@gmail.com"
-__status__      = "Production"
 __verbose__     = False
 
 
@@ -445,6 +444,8 @@ class PiCamServerHandler(BaseRequestHandler):
 			self.log("Receiving command: " + str(command))
 			data = StateData(command)
 			# Action and subject evaluation
+			if data.action == 'echo' and (data.subject is None or data.subject == 'server'):
+				self.runEchoServer()
 			if data.action == 'stop' and data.subject == 'server':
 				self.runStopServer()
 			if data.action == 'start' and data.subject == 'service':
@@ -456,7 +457,7 @@ class PiCamServerHandler(BaseRequestHandler):
 			# Send the sign for end of communication
 			self.request.sendall(".")
 		except BaseException as stderr:
-			self.log(["Application error:", stderr])
+			self.log(["ERROR:", stderr])
 			if __verbose__:
 				traceback.print_exc()
 
@@ -530,6 +531,9 @@ class PiCamServerHandler(BaseRequestHandler):
 		self._server.shutdown()
 		self._server.server_close()
 
+	#Method: runEchoServer
+	def runEchoServer(self):
+		self.log(__project__ + " " + __module__ + " " + __version__ + ", " + __license__ + ", " + __copyright__, toClient=True)
 
 	#Method: runSetProperty
 	def runSetProperty(self, data):
@@ -792,7 +796,7 @@ class PiCamClient:
 
 #Class: CmdData
 class StateData:
-	_actions = ['start', 'stop', 'set', 'enable', 'disable']
+	_actions = ['start', 'stop', 'set', 'enable', 'disable' ,'status', 'echo']
 	_subjects = ['server', 'service', 'property']
 	_properties = ['streaming', 'recording', 'resolution', 'threshold', 'location', 'sleeptime', 'framerate']
 	_targetarticles = ['@', 'at', 'on', 'in', 'to']
@@ -815,8 +819,8 @@ class StateData:
 		else:
 			raise RuntimeError("Invalid or null client command")
 		# Validate obtained data structure
-		if (self.action == "start" or self.action == "stop") and not (self.subject == "server" or self.subject == "service"):
-			raise RuntimeError("Invalid subject of start/stop action: " + self.subject)
+		if (self.action == "start" or self.action == "stop" or self.action == "status") and not (self.subject == "server" or self.subject == "service"):
+			raise RuntimeError("Invalid subject of start/stop/status action: " + self.subject)
 		elif (self.action == "set" or self.action == "enable" or self.action == "disable") and self.subject != "property":
 			raise RuntimeError("Invalid action for property action: " + self.action)
 		elif self.subject == 'server' and self.target is not None:
@@ -904,33 +908,35 @@ class StateData:
 		return self._targetarticles
 
 
+#Function: usage - help text
 def usage():
-	print """
+	print "\n" + __project__ + " " + __module__ + " " + __version__ + ", " + __license__ + ", " + __copyright__ + """
 Usage: picam -c "start server" [-f ./picam.cfg] -h "localhost" -p 9079
 
-In order to run server or client modules use the syntax:
-	> picam -c "start server"
-	> picam --command="start server"
-= run server (using default hostname and port) using input options
-	> picam start server
-= run server (using default hostname and port) aggregating command from all input parameters
-	> picam -c "start server" -h "10.10.10.100" -p 6400
-	> picam --command="start server" --host="127.0.0.1" --port=6400
-= run server (using default hostname and port) using input options
-	> picam -c "start service on #1"
-	> picam --command="start service on c1"
-= run client to start on server camera #1. The client will connect to server using default port
-	> picam enable recording on c0
-= run client (using default hostname and port) aggregating command from all input parameters
-	> picam -c "set parameter resolution=1280,720 on c1" -h "192.168.0.100" -p 6400
-	> picam --command="set parameter resolution=1280,720 on c1" --host="127.0.0.1" --port=6400
-= run client that will send the command described by a specific option to a dedicated server
-	> picam "start server and start service on #0 and enable property streaming on #0 and enable property recording on #0"
-= this is a composed command (by 'and' operator) which can start the server, camera #0 and other. This kind of composed command could be run directly when you start the server or you can executed from client
-	> picam -f /opt/clue/etc/picam.cfg
-= run picam application using a configuration file (a file with commands), able to start the server or to run specific client actions
-	"""
+Particular options:
+> picam -c "start server"
+> picam --command="start server"
+  = run server (using default hostname and port) using input options
+> picam start server
+  = run server (using default hostname and port) aggregating command from all input parameters
+> picam -c "start server" -h "10.10.10.100" -p 6400
+> picam --command="start server" --host="127.0.0.1" --port=6400
+  = run server (using default hostname and port) using input options
+> picam -c "start service on #1"
+> picam --command="start service on c1"
+  = run client to start on server camera #1. The client will connect to server using default port
+> picam enable recording on c0
+  = run client (using default hostname and port) aggregating command from all input parameters
+> picam -c "set parameter resolution=1280,720 on c1" -h "192.168.0.100" -p 6400
+> picam --command="set parameter resolution=1280,720 on c1" --host="127.0.0.1" --port=6400
+  = run client that will send the command described by a specific option to a dedicated server
+> picam "start server and start service on #0 and enable property streaming on #0 and enable property recording on #0"
+  = this is a composed command (by 'and' operator) which can start the server, camera #0 and other. This kind of composed command could be run directly when you start the server or you can executed from client
+> picam -f /opt/clue/etc/picam.cfg
+  = run picam application using a configuration file (a file with commands), able to start the server or to run specific client actions
+"""
 
+#Function: str2bool - convert string values to boolean values
 def str2bool(v):
 	if v.lower() in ("on", "yes", "true", "t", "1"):
 		return True
@@ -939,7 +945,21 @@ def str2bool(v):
 	else:
 		return None
 
+def cmdfile(file, command=''):
+	if file is not None and os.path.isfile(file):
+		cfgfile = open(file, 'r')
+		cfglines = cfgfile.readlines()
+		cfgfile.close()
+		for cmdline in cfglines:
+			if cmdline.strip() != '' and not cmdline.strip().startswith('#'):
+				if command is not None:
+					command += ' and ' + cmdline.strip()
+				else:
+					command = cmdline.strip()
+	return command
 
+
+# Main program
 if __name__=="__main__":
 	# Global variables to identify input parameters
 	command = None
@@ -964,17 +984,12 @@ if __name__=="__main__":
 	# Validate command: if command was not specified through input options collect all input parameters and aggregate them in one single command
 	if (command is None or command == '') and file is None and host is None and port is None:
 		command = ' '.join(sys.argv[1:])
+		if command.strip() == 'help':
+			usage()
+			sys.exit(0)
 	# Check if a configuration file has been specified read it ang get all commands defined in
 	if file is not None and os.path.isfile(file):
-		cfgfile = open(file, 'r')
-		cfglines = cfgfile.readlines()
-		cfgfile.close()
-		for cmdline in cfglines:
-			if cmdline.strip() != '' and not cmdline.strip().startswith('#'):
-				if command is not None:
-					command += ' and ' + cmdline.strip()
-				else:
-					command = cmdline.strip()
+		command = cmdfile(file, command)
 	# Instantiate Client module an run the command
 	client = PiCamClient(host, port)
 	client.run(command)
