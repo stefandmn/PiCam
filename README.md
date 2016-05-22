@@ -25,10 +25,10 @@ If one of these parameters are used (to specify the interface or the server port
 If you want to start picam application using a configuration file you have to specify one of the options `-f` or `--file` with a valid file path. The configuration should include commands separated by end of line. Comment lines could be specified by prefixing the line with `#` character. Empty lines are ignored.
 
 The commands accepted by PiCam client and server components have been defined around to a simple grammar that contains only three elements:
-- **subject** - accepted values are: **server**, **service**, **property**
-- **action** (verbs) - the used values are: **start**, **stop**, **set**, **enable**, **disable**
-- **properties** (or complements) - possible values are: **streaming**, **recording**, **resolution**, **threshold**, **location**, **sleeptime**, **framerate**
-- **articles** - accepted values are: **to**, **at**, **on**, **in**, **@**. After the article you have to specify the camera target (#0, #1, .. - so the camera target is the camera index having `#` prefix).
+- **subject** - the corresponding values are: **server**, **service**, **property**
+- **action** - the implemented actions are: **start**, **stop**, **set**, **enable**, **disable**, **echo**, **status**
+- **properties** - possible values are: **streaming**, **recording**, **resolution**, **threshold**, **location**, **sleeptime**, **framerate**
+- **articles** - used target indicators are: **to**, **at**, **on**, **in**, **@**. After the article you have to specify the camera target (#0, #1, .. - so the camera target is the camera index having `#` prefix).
 
 With three elements you can compose any command (the order of elements is arbitrary) that could run in client interface. For instance if you want to start the Pi camera you can define and run one of the following commands:
 `start service on #0` or `service start on #0` or `on #1 start service`
