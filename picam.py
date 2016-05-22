@@ -300,7 +300,7 @@ class Camera(threading.Thread):
 	def log(self, data):
 		type, message = tomsg(data)
 		if message != '':
-			print "%s | %s %s > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), self.name, type, message)
+			print "%s | %s %s > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), type, self.name, message)
 
 	# Method: start
 	def run(self):
@@ -434,17 +434,15 @@ class PiCamServerHandler(BaseRequestHandler):
 			if data.action == 'stop' and data.subject == 'server':
 				self.runStopServer()
 			if data.action == 'start' and data.subject == 'service':
-				self.runStartService(data)
+				self.runStartService(data.target)
 			if data.action == 'stop' and data.subject == 'service':
-				self.runStopService(data)
+				self.runStopService(data.target)
 			if (data.action == 'set' or data.action == 'enable' or data.action == 'disable') and data.subject == 'property':
 				self.runSetProperty(data)
-			# Send the sign for end of communication
+			# Ending communication
 			self.request.sendall("END")
 		except BaseException as stderr:
-			self.log(["Handling server command failed", stderr])
-			if __verbose__:
-				traceback.print_exc()
+			self.log(["Handling server command failed:", stderr])
 
 	# Method: log
 	def log(self, data, toClient=False):
@@ -452,35 +450,37 @@ class PiCamServerHandler(BaseRequestHandler):
 		if message != '':
 			# Send message to the standard output or to the client console
 			if toClient:
-				self.request.sendall(type)
-				self.request.sendall(message)
+				if type is not None and type != '':
+					self.request.sendall(type + "@" + message)
+				else:
+					self.request.sendall(message)
 			else:
 				print "%s | %s Server > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), type, message)
 
 	# Method: runStartService
-	def runStartService(self, data):
-		if data is not None and data.target is not None:
-			if data.target in self._server.getCameras():
-				self.log("Camera " + data.target + " is already started", toClient=True)
+	def runStartService(self, key):
+		if key is not None:
+			if key in self._server.getCameras():
+				self.log("Camera " + key + " is already started", toClient=True)
 			else:
-				camera = Camera(data.target)
+				camera = Camera(key)
 				camera.setStreamingPort(self._server.server_address[1] + 1 + camera.getId())
 				camera.start()
-				self._server.getCameras()[data.target] = camera
-				self.log("Camera " + data.target + " has been started", toClient=True)
+				self._server.getCameras()[key] = camera
+				self.log("Camera " + key + " has been started", toClient=True)
 		else:
 			self.log("Camera identifier was not specified", toClient=True)
 
 	# Method: runStopService
-	def runStopService(self, data):
-		if data is not None and data.target is not None:
-			if data.target in self._server.getCameras():
-				camera = self._server.getCameras()[data.target]
+	def runStopService(self, key):
+		if key is not None:
+			if key in self._server.getCameras():
+				camera = self._server.getCameras()[key]
 				camera.stop()
-				del self._server.getCameras()[data.target]
-				self.log("Camera " + data.target + " has been stopped", toClient=True)
+				del self._server.getCameras()[key]
+				self.log("Camera " + key + " has been stopped", toClient=True)
 			else:
-				self.log("Camera " + data.target + " was not yet started", toClient=True)
+				self.log("Camera " + key + " was not yet started", toClient=True)
 		else:
 			self.log("Camera could not be identified to stop service", toClient=True)
 
@@ -495,7 +495,7 @@ class PiCamServerHandler(BaseRequestHandler):
 					self.runStopService(key)
 					time.sleep(1)
 				except BaseException as baserr:
-					self.log(["Stopping service on camera", key, " failed:", baserr])
+					self.log(["Stopping service on camera", key, "failed:", baserr])
 		# Stop server thread
 		self._server.shutdown()
 		self._server.server_close()
@@ -687,11 +687,11 @@ class PiCamClient:
 				return self._apiOutRes
 		# Check if input command ask to start server instance
 		if data.action == "start" and data.subject == "server":
-			self.log(__module__ + " Server is starting")
 			server = PiCamServer((self._host, self._port), PiCamServerHandler)
 			serverhread = threading.Thread(target=server.serve_forever)
 			serverhread.daemon = True
 			serverhread.start()
+			self.log(__module__ + " Server has been started")
 			# Check if the current command is linked by other to execute the whole chain
 			if data.hasLinkedData():
 				data = data.getLinkedData()
@@ -710,25 +710,22 @@ class PiCamClient:
 				self.log("Sending command: " + command)
 				client.sendall(command)
 				# Getting the answers from server
-				message = None
-				level = None
 				while True:
 					answer = client.recv(1024)
 					# Evaluate answer
-					if answer == "END":
-						break
-					elif answer == "START":
-						message = None
-					elif answer == "INFO" or answer == "ERROR" or answer == "WARN":
-						level = answer
-						message = None
+					if answer != "END" and answer != '':
+						if answer.startswith("INFO@") or answer.startswith("ERROR@"):
+							level = answer.split('@', 1)[0]
+							message = answer.split('@', 1)[1]
+						else:
+							level = None
+							message = answer
+						# Display message to standard output
+						if message is not None and message != "":
+							self.log(message, type=level, server=True)
+							self._logapi(message, type=level)
 					else:
-						message = answer
-					# Display message to standard output
-					if message is not None:
-						self.log(message, type=level, server=True)
-						self._logapi(message, type=level)
-						level = None
+						break
 				client.close()
 			except BaseException as baserr:
 				errordata = ["Command failed:", baserr]
@@ -764,11 +761,11 @@ class PiCamClient:
 		else:
 			return self._apiOutRes
 
-	#Method: getApiResult
+	# Method: getApiResult
 	def getApiResult(self):
 		return self._apiOutRes
 
-	#Method: getApiMessages
+	# Method: getApiMessages
 	def getApiMessages(self):
 		return self._apiOutMsg
 
@@ -785,12 +782,12 @@ class PiCamClient:
 
 	# Method: _logapi
 	def _logapi(self, data, type=None):
-		if self._api:
+		if self._api and self._onlog:
 			type, message = tomsg(data, type)
 			# Evaluate message and type
 			if message != '':
 				self._apiOutMsg.append(message)
-				if type == "ERROR": self._apiOutRes |= False
+				if type is not None and type == "ERROR": self._apiOutRes |= False
 
 
 # Class: CmdData
@@ -982,20 +979,20 @@ def tomsg(data, level=None):
 	# Build message
 	for obj in objlist:
 		if isinstance(obj, BaseException):
+			# When verbose is activated print out the stacktrace
+			if __verbose__:
+				traceback.print_exc()
+			# Take exception details to be described in log message
 			part = str(obj)
 			if part is None or part.strip() == '':
 				part = type(obj).__name__
 			message += ' ' + part
 			level = "ERROR"
-			# When verbose is activated print out the stacktrace
-			if __verbose__:
-				traceback.print_exc()
 		else:
 			message += ' ' + str(obj)
-	if level is None or level == '':
-		level = "INFO"
+	if level is None or level == '': level = "INFO"
 	# return turtle
-	return (level, message.strip())
+	return level, message.strip()
 
 
 # Main program
