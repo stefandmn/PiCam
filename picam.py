@@ -913,7 +913,7 @@ def usage():
 Usage: picam -c "start server" [-f ./picam.cfg] -i "0.0.0.0" -p 9079
 
 Options:
- -v, --verbose    activate verbosity mode
+ -v, --verbose    run in verbosity mode
  -i, --interface  host interface to start server component
  -h, --host       host name/ip of the server for client connectivity
  -p, --port       host port number for client connectivity
