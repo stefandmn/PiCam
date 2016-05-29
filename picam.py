@@ -373,17 +373,11 @@ class Motion:
 		return output
 
 	# Method: threshold
-	def threshold(self, input):
-		output = cv.CreateImage(cv.GetSize(input), cv.IPL_DEPTH_8U, 1)
-		cv.Threshold(input, output, 70, 255, cv.CV_THRESH_BINARY)
-		return output
-
-	# Method: magnifier
-	def magnifier(self, input):
-		output = cv.CreateImage(cv.GetSize(input), cv.IPL_DEPTH_8U, 1)
-		cv.Dilate(input, output, None, 18)
-		cv.Erode(output, output, None, 10)
-		return output
+	def threshold(self, frame):
+		cv.Threshold(frame, frame, 35, 255, cv.CV_THRESH_BINARY)
+		cv.Dilate(frame, frame, None, 18)
+		cv.Erode(frame, frame, None, 10)
+		return frame
 
 	# Method: contour
 	def contour(self, input):
@@ -391,7 +385,7 @@ class Motion:
 		return cv.FindContours(input, storage, cv.CV_RETR_CCOMP, cv.CV_CHAIN_APPROX_SIMPLE)
 
 	# Method: movearea
-	def movearea(self, contour, input):
+	def movearea(self, contour, frame):
 		points = []
 		area = 0
 		while contour:
@@ -404,7 +398,7 @@ class Motion:
 			area += ((pt2[0] - pt1[0]) * (pt2[1] - pt1[1]))
 			points.append(pt1)
 			points.append(pt2)
-			cv.Rectangle(input, pt1, pt2, cv.CV_RGB(255,0,0), 1)
+			cv.Rectangle(frame, pt1, pt2, cv.CV_RGB(255,0,0), 1)
 		return area
 
 	# Method: detect
@@ -417,9 +411,8 @@ class Motion:
 			else:
 				_gray = self.gray(frame)
 				_diff = self.absdiff(self._gray, _gray)
-				_blwt = self.threshold(_diff)
-				_magn = self.magnifier(_blwt)
-				_cntr = self.contour(_magn)
+				_move = self.threshold(_diff)
+				_cntr = self.contour(_move)
 				_area = self.movearea(_cntr, frame)
 				# Evaluation
 				if self.isRecording() and _area > self.getThreshold():
