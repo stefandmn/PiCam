@@ -331,6 +331,7 @@ class Motion:
 		self._camera = camera
 		# Initialize engine parameters
 		self._gray = None
+		self._size = (320,240)
 
 	# Method: isRecording
 	def isRecording(self):
@@ -345,9 +346,9 @@ class Motion:
 		return self._camera.getRecordingLocation()
 
 	# Method: write
-	def write(self, input, text, area=0):
+	def write(self, frame, text, area=0):
 		try:
-			clone = cv.CloneImage(input)
+			clone = cv.CloneImage(frame)
 			message = text + " @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
 			filename = self.getLocation() + os.path.sep + "cam" + str(self._camera.getId()).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
 			if area > 0:
@@ -361,15 +362,17 @@ class Motion:
 			self._camera._recording = False
 
 	# Method: gray
-	def gray(self, input):
-		output = cv.CreateImage(cv.GetSize(input), cv.IPL_DEPTH_8U, 1)
-		cv.CvtColor(input, output, cv.CV_RGB2GRAY)
-		return output
+	def gray(self, frame):
+		copy = cv.CreateImage(cv.GetSize(frame), cv.IPL_DEPTH_8U, 1)
+		cv.CvtColor(frame, copy, cv.CV_RGB2GRAY)
+		resize = cv.CreateImage(self._size, cv.IPL_DEPTH_8U, 1)
+		cv.Resize(copy, resize)
+		return resize
 
 	# Method: absdiff
-	def absdiff(self, input1, input2):
-		output = cv.CloneImage(input1)
-		cv.AbsDiff(input1, input2, output)
+	def absdiff(self, frame1, frame2):
+		output = cv.CloneImage(frame1)
+		cv.AbsDiff(frame1, frame2, output)
 		return output
 
 	# Method: threshold
@@ -380,20 +383,19 @@ class Motion:
 		return frame
 
 	# Method: contour
-	def contour(self, input):
-		storage = cv.CreateMemStorage(0)
-		return cv.FindContours(input, storage, cv.CV_RETR_CCOMP, cv.CV_CHAIN_APPROX_SIMPLE)
-
-	# Method: movearea
-	def movearea(self, contour, frame):
+	def contour(self, move, frame):
 		points = []
 		area = 0
+		xsize = cv.GetSize(frame)[0] / self._size[0]
+		ysize = cv.GetSize(frame)[1] / self._size[1]
+		storage = cv.CreateMemStorage(0)
+		contour = cv.FindContours(move, storage, cv.CV_RETR_CCOMP, cv.CV_CHAIN_APPROX_SIMPLE)
 		while contour:
 			bound_rect = cv.BoundingRect(list(contour))
 			contour = contour.h_next()
 			# Compute the bounding points to the boxes that will be drawn on the screen
-			pt1 = (bound_rect[0], bound_rect[1])
-			pt2 = (bound_rect[0] + bound_rect[2], bound_rect[1] + bound_rect[3])
+			pt1 = (bound_rect[0] * xsize, bound_rect[1] * ysize)
+			pt2 = ((bound_rect[0] + bound_rect[2]) * xsize, (bound_rect[1] + bound_rect[3]) * ysize)
 			# Add this latest bounding box to the overall area that is being detected as movement
 			area += ((pt2[0] - pt1[0]) * (pt2[1] - pt1[1]))
 			points.append(pt1)
@@ -412,8 +414,7 @@ class Motion:
 				_gray = self.gray(frame)
 				_diff = self.absdiff(self._gray, _gray)
 				_move = self.threshold(_diff)
-				_cntr = self.contour(_move)
-				_area = self.movearea(_cntr, frame)
+				_area = self.contour(_move, frame)
 				# Evaluation
 				if self.isRecording() and _area > self.getThreshold():
 					self.write(frame, "Motion detected", _area)
