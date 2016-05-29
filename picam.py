@@ -372,8 +372,8 @@ class Motion:
 		cv.AbsDiff(input1, input2, output)
 		return output
 
-	# Method: blackwhite
-	def blackwhite(self, input):
+	# Method: threshold
+	def threshold(self, input):
 		output = cv.CreateImage(cv.GetSize(input), cv.IPL_DEPTH_8U, 1)
 		cv.Threshold(input, output, 70, 255, cv.CV_THRESH_BINARY)
 		return output
@@ -417,7 +417,7 @@ class Motion:
 			else:
 				_gray = self.gray(frame)
 				_diff = self.absdiff(self._gray, _gray)
-				_blwt = self.blackwhite(_diff)
+				_blwt = self.threshold(_diff)
 				_magn = self.magnifier(_blwt)
 				_cntr = self.contour(_magn)
 				_area = self.movearea(_cntr, frame)
