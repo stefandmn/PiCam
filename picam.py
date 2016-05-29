@@ -5,7 +5,7 @@ __module__ = "PiCam"
 __author__ = "SDA"
 __copyright__ = "Copyright (C) 2015-2016, AMSD"
 __license__ = "GPL"
-__version__ = "1.1.3"
+__version__ = "1.1.4"
 __maintainer__ = "SDA"
 __email__ = "damian.stefan@gmail.com"
 __verbose__ = False
@@ -149,6 +149,7 @@ class Camera(threading.Thread):
 	# Method: setOffRecording
 	def setOffRecording(self):
 		if self.isRecording():
+			self._motion = None
 			self._recording = False
 		else:
 			self.log("Recording function is not enabled")
@@ -160,7 +161,8 @@ class Camera(threading.Thread):
 	# Method: runRecording
 	def runRecording(self):
 		if self.isRecording() and self._motion is not None:
-			self._motion.detect()
+			frame = self.getFrame()
+			self._motion.detect(frame)
 
 	# Method: _setStreaming
 	def _applyStreaming(self):
@@ -328,10 +330,7 @@ class Motion:
 		# Set input parameters
 		self._camera = camera
 		# Initialize engine parameters
-		self._frame_diff = None
-		self._frame_gray = None
-		self._frame_avrg = None
-		self._frame_temp = None
+		self._gray = None
 
 	# Method: isRecording
 	def isRecording(self):
@@ -345,69 +344,87 @@ class Motion:
 	def getLocation(self):
 		return self._camera.getRecordingLocation()
 
-	# Method: detect
-	def detect(self):
-		# Get camera current frame
-		frame = self._camera.getFrame()
-		if frame is not None:
-			# Smooth to get rid of false positives
-			cv.Smooth(frame, frame, cv.CV_GAUSSIAN, 3, 0)
-			# Check if is needed to initialize the engine
-			if self._frame_avrg is None:
-				self._frame_diff = cv.CloneImage(frame)
-				self._frame_temp = cv.CloneImage(frame)
-				self._frame_gray = cv.CreateImage(cv.GetSize(frame), cv.IPL_DEPTH_8U, 1)
-				self._frame_avrg = cv.CreateImage(cv.GetSize(frame), cv.IPL_DEPTH_32F, 3)
-				cv.ConvertScale(frame, self._frame_avrg, 1.0, 0.0)
-				# Save initial image
-				if self.isRecording():
-					clone = cv.CloneImage(frame)
-					try:
-						cv.PutText(clone, "Start monitoring @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime()), (10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .3, .3, 0.0, 1, cv.CV_AA), (255, 255, 255))
-						cv.SaveImage(self.getLocation() + os.path.sep + "cam" + str(self._camera.getId()).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f") + ".png", clone)
-					except IOError as ioerr:
-						self._camera.log(["Saving data failed:", ioerr])
-						self._camera._recording = False
+	# Method: write
+	def write(self, input, text, area=0):
+		try:
+			clone = cv.CloneImage(input)
+			message = text + " @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
+			filename = self.getLocation() + os.path.sep + "cam" + str(self._camera.getId()).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+			if area > 0:
+				filename += "-" + str(area) + ".png"
 			else:
-				cv.RunningAvg(frame, self._frame_avrg, 0.020, None)
-			# Convert the scale of the moving average.
-			cv.ConvertScale(self._frame_avrg, self._frame_temp, 1.0, 0.0)
-			# Minus the current frame from the moving average.
-			cv.AbsDiff(frame, self._frame_temp, self._frame_diff)
-			# Convert the image to grayscale.
-			cv.CvtColor(self._frame_diff, self._frame_gray, cv.CV_RGB2GRAY)
-			# Convert the image to black and white.
-			cv.Threshold(self._frame_gray, self._frame_gray, 70, 255, cv.CV_THRESH_BINARY)
-			# Dilate and erode to get people blobs
-			cv.Dilate(self._frame_gray, self._frame_gray, None, 18)
-			cv.Erode(self._frame_gray, self._frame_gray, None, 10)
-			# Get contours
-			storage = cv.CreateMemStorage(0)
-			contour = cv.FindContours(self._frame_gray, storage, cv.CV_RETR_CCOMP, cv.CV_CHAIN_APPROX_SIMPLE)
-			# Evaluate contours
-			points = []
-			movementArea = 0
-			while contour:
-				bound_rect = cv.BoundingRect(list(contour))
-				contour = contour.h_next()
-				# Compute the bounding points to the boxes that will be drawn on the screen
-				pt1 = (bound_rect[0], bound_rect[1])
-				pt2 = (bound_rect[0] + bound_rect[2], bound_rect[1] + bound_rect[3])
-				# Add this latest bounding box to the overall area that is being detected as movement
-				movementArea += ((pt2[0] - pt1[0]) * (pt2[1] - pt1[1]))
-				points.append(pt1)
-				points.append(pt2)
-				# Draw the contours
-				cv.Rectangle(frame, pt1, pt2, cv.CV_RGB(255, 0, 0), 1)
-			# Check if it's about movement and save the frame
-			if self.isRecording() and movementArea > self.getThreshold():
-				clone = cv.CloneImage(frame)
-				try:
-					cv.PutText(clone, "Motion detected @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime()), (10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .3, .3, 0.0, 1, cv.CV_AA), (255, 255, 255))
-					cv.SaveImage(self.getLocation() + os.path.sep + "cam" + str(self._camera.getId()).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f") + "-" + str(movementArea) + ".png", clone)
-				except IOError as ioerr:
-					self._camera.log(["Saving motion detection data:", ioerr])
-					self._camera._recording = False
+				filename += ".png"
+			cv.PutText(clone, message, (10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .32, .32, 0.0, 1, cv.CV_AA), (255, 255, 255))
+			cv.SaveImage(filename, clone)
+		except IOError as ioerr:
+			self._camera.log(["Saving motion data failed:", ioerr])
+			self._camera._recording = False
+
+	# Method: gray
+	def gray(self, input):
+		output = cv.CreateImage(cv.GetSize(input), cv.IPL_DEPTH_8U, 1)
+		cv.CvtColor(input, output, cv.CV_RGB2GRAY)
+		return output
+
+	# Method: absdiff
+	def absdiff(self, input1, input2):
+		output = cv.CloneImage(input1)
+		cv.AbsDiff(input1, input2, output)
+		return output
+
+	# Method: blackwhite
+	def blackwhite(self, input):
+		output = cv.CreateImage(cv.GetSize(input), cv.IPL_DEPTH_8U, 1)
+		cv.Threshold(input, output, 70, 255, cv.CV_THRESH_BINARY)
+		return output
+
+	# Method: magnifier
+	def magnifier(self, input):
+		output = cv.CreateImage(cv.GetSize(input), cv.IPL_DEPTH_8U, 1)
+		cv.Dilate(input, output, None, 18)
+		cv.Erode(output, output, None, 10)
+		return output
+
+	# Method: contour
+	def contour(self, input):
+		storage = cv.CreateMemStorage(0)
+		return cv.FindContours(input, storage, cv.CV_RETR_CCOMP, cv.CV_CHAIN_APPROX_SIMPLE)
+
+	# Method: movearea
+	def movearea(self, contour, input):
+		points = []
+		area = 0
+		while contour:
+			bound_rect = cv.BoundingRect(list(contour))
+			contour = contour.h_next()
+			# Compute the bounding points to the boxes that will be drawn on the screen
+			pt1 = (bound_rect[0], bound_rect[1])
+			pt2 = (bound_rect[0] + bound_rect[2], bound_rect[1] + bound_rect[3])
+			# Add this latest bounding box to the overall area that is being detected as movement
+			area += ((pt2[0] - pt1[0]) * (pt2[1] - pt1[1]))
+			points.append(pt1)
+			points.append(pt2)
+			cv.Rectangle(input, pt1, pt2, cv.CV_RGB(255,0,0), 1)
+		return area
+
+	# Method: detect
+	def detect(self, frame):
+		if frame is not None:
+			# Check if is needed to initialize the engine
+			if self._gray is None:
+				self.write(frame, "Start monitoring")
+				self._gray = self.gray(frame)
+			else:
+				_gray = self.gray(frame)
+				_diff = self.absdiff(self._gray, _gray)
+				_blwt = self.blackwhite(_diff)
+				_magn = self.magnifier(_blwt)
+				_cntr = self.contour(_magn)
+				_area = self.movearea(_cntr, frame)
+				# Evaluation
+				if self.isRecording() and _area > self.getThreshold():
+					self.write(frame, "Motion detected", _area)
+				self._gray = _gray
 
 
 # Class: PiCamServerHandler
