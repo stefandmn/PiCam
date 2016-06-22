@@ -14,7 +14,7 @@ This command will start the server and will keep the prompt until a client comma
 
 As soon as the server is started in a separate terminal you can run the client module with a specific command: for example you can start the USB camera as follow:
 `> python picam.py "start service on #1"`
-`> python picam.py "enable property streaming on #1"`
+`> python picam.py "enable property CameraStreaming on #1"`
 So, this command will start the first USB camera and also will activate the streaming function. 
 
 Because this application is able to control both USB and Pi cameras it is was defined a convention to manipulate attached camera to a Pi: so, USB camera are called using #1 to #4 (or greater, depends how many USB ports has your RPi device) and always camera #0 is the Pi camera attached on board.
@@ -27,7 +27,7 @@ If you want to start **picam** application using a configuration file you have t
 The commands accepted by PiCam client and server components have been defined around to a simple grammar that contains only three elements:
 - **subject** - the corresponding values are: **server**, **service**, **property**
 - **action** - the implemented actions are: **start**, **stop**, **set**, **enable**, **disable**, **echo**, **status**
-- **properties** - possible values are: **streaming**, **recording**, **resolution**, **threshold**, **location**, **sleeptime**, **framerate**
+- **properties** - possible values are: **CameraStreaming**, **CameraMotionDetection**, **CameraResolution**, **CameraFramerate**, **CameraSleeptime**, **MotionDetectionContour**, **MotionDetectionRecording**, **MotionRecordingFormat**, **MotionRecordingThreshold**, **MotionRecordingLocation**, **StreamingPort**, **StreamingSleeptime**
 - **articles** - used target indicators are: **to**, **at**, **on**, **in**, **@**. After the article you have to specify the camera target (#0, #1, .. - so the camera target is the camera index having `#` prefix).
 
 With three elements you can compose any command (the order of elements is arbitrary) that could run in client interface. For instance if you want to start the Pi camera you can define and run one of the following commands:

@@ -3,11 +3,10 @@
 __project__ = "Clue"
 __module__ = "PiCam"
 __author__ = "SDA"
+__email__ = "damian.stefan@gmail.com"
 __copyright__ = "Copyright (C) 2015-2016, AMSD"
 __license__ = "GPL"
 __version__ = "1.1.7"
-__maintainer__ = "SDA"
-__email__ = "damian.stefan@gmail.com"
 __verbose__ = False
 
 import os
@@ -234,7 +233,7 @@ class Camera(threading.Thread):
 			try:
 				self._lock = True
 				# Set value
-				self._framerate = int(framerate)
+				self._framerate = framerate
 				# Configure camera
 				if isinstance(self._camera, PiCamera):
 					self._camera.framerate = self._framerate
@@ -243,6 +242,10 @@ class Camera(threading.Thread):
 				self._lock = False
 			except BaseException as baseerr:
 				self.log(["Applying camera framerate failed:", baseerr])
+
+	# Method: setCameraSleeptime
+	def setCameraSleeptime(self, sleeptime):
+		self._sleeptime = sleeptime
 
 	# Method: setMotionOn
 	def setMotionOn(self):
@@ -258,8 +261,8 @@ class Camera(threading.Thread):
 		else:
 			self.log("Motion detection function is not enabled")
 
-	# Method: setMotionRecording
-	def setMotionRecording(self, recording):
+	# Method: setMotionDetectionRecording
+	def setMotionDetectionRecording(self, recording):
 		if self.isMotionEnabled():
 			self._motion.setRecording(recording)
 		else:
@@ -279,8 +282,8 @@ class Camera(threading.Thread):
 		else:
 			self.log("Motion detection function is not enabled")
 
-	# Method: setMotionDetectionThreshold
-	def setMotionDetectionThreshold(self, threshold):
+	# Method: setMotionRecordingThreshold
+	def setMotionRecordingThreshold(self, threshold):
 		if self.isMotionEnabled():
 			self._motion.setThreshold(threshold)
 		else:
@@ -594,33 +597,48 @@ class PiCamServerHandler(BaseRequestHandler):
 			# Identify property name and property value
 			camprop = data.property.split('=')[0].strip()
 			camdata = data.property.split('=')[1].strip()
-			# Evaluate streaming property
-			if camprop == data.getProperties()[0]:
+			# Evaluate CameraStreaming property
+			if camprop.lower() == data.getProperties()[0].lower():
 				if str2bool(camdata):
 					camera.setStreamingOn()
 				else:
 					camera.setStreamingOff()
-			# Evaluate recording property
-			elif camprop == data.getProperties()[1]:
+			# Evaluate CameraMotionDetection property
+			elif camprop.lower() == data.getProperties()[1].lower():
 				if str2bool(camdata):
 					camera.setMotionOn()
 				else:
 					camera.setMotionOff()
-			# Evaluate resolution property
-			elif camprop == data.getProperties()[2]:
-				camera.setCameraResolution(camdata)
-			# Evaluate threshold property
-			elif camprop == data.getProperties()[3]:
-				camera.setMotionDetectionThreshold(int(camdata))
-			# Evaluate location property
-			elif camprop == data.getProperties()[4]:
+			# Evaluate CameraResolution property
+			elif camprop.lower() == data.getProperties()[2].lower():
+				camera.setCameraResolution(str(camdata))
+			# Evaluate CameraFramerate property
+			elif camprop.lower() == data.getProperties()[3].lower():
+				camera.setCameraFramerate(int(camdata))
+			# Evaluate CameraSleeptime property
+			elif camprop.lower() == data.getProperties()[4].lower():
+				camera.setCameraSleeptime(float(camdata))
+			# Evaluate MotionDetectionContour property
+			elif camprop.lower() == data.getProperties()[5].lower():
+				camera.setMotionDetectionContour(str2bool(camdata))
+			# Evaluate MotionDetectionRecording property
+			elif camprop.lower() == data.getProperties()[6].lower():
+				camera.setMotionDetectionRecording(str2bool(camdata))
+			# Evaluate MotionRecordingFormat property
+			elif camprop.lower() == data.getProperties()[7].lower():
+				camera.setMotionRecordingFormat(str(camdata))
+			# Evaluate MotionRecordingThreshold property
+			elif camprop.lower() == data.getProperties()[8].lower():
+				camera.setMotionRecordingThreshold(int(camdata))
+			# Evaluate MotionRecordingLocation property
+			elif camprop.lower() == data.getProperties()[9].lower():
 				camera.setMotionRecordingLocation(str(camdata))
-			# Evaluate sleeptime property
-			elif camprop == data.getProperties()[5]:
-				camera.setSleep(float(camdata))
-			# Evaluate framerate property
-			elif camprop == data.getProperties()[6]:
-				camera.setCameraFramerate(camdata)
+			# Evaluate StreamingPort property
+			elif camprop.lower() == data.getProperties()[10].lower():
+				camera.setStreamingPort(int(camdata))
+			# Evaluate StreamingSleeptime property
+			elif camprop.lower() == data.getProperties()[11].lower():
+				camera.setStreamingSleep(float(camdata))
 			# Answer to client
 			self.log("Property '" + data.property + "' has been applied on camera " + data.target, toClient=True)
 		else:
@@ -870,7 +888,9 @@ class PiCamClient:
 class StateData:
 	_actions = ['start', 'stop', 'set', 'enable', 'disable', 'status', 'echo']
 	_subjects = ['server', 'service', 'property']
-	_properties = ['streaming', 'recording', 'resolution', 'threshold', 'location', 'sleeptime', 'framerate']
+	_properties = ['CameraStreaming', 'CameraMotionDetection', 'CameraResolution', 'CameraFramerate', 'CameraSleeptime',
+				   'MotionDetectionContour', 'MotionDetectionRecording', 'MotionRecordingFormat', 'MotionRecordingThreshold', 'MotionRecordingLocation',
+				   'StreamingPort', 'StreamingSleeptime']
 	_targetarticles = ['@', 'at', 'on', 'in', 'to']
 
 	# Constructor
