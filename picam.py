@@ -5,7 +5,7 @@ __module__ = "PiCam"
 __author__ = "SDA"
 __copyright__ = "Copyright (C) 2015-2016, AMSD"
 __license__ = "GPL"
-__version__ = "1.1.4"
+__version__ = "1.1.7"
 __maintainer__ = "SDA"
 __email__ = "damian.stefan@gmail.com"
 __verbose__ = False
@@ -28,26 +28,24 @@ from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 
 # Class: Camera
 class Camera(threading.Thread):
-	def __init__(self, c_id, c_resolution=None, c_framerate=None,
-				 streaming=False, s_port=9080, s_sleeptime=0.05,
-				 recording=False, r_threshold=1000, r_location='/tmp'):
+	def __init__(self, id, motion=False, streaming=False):
 		# Validate camera id input parameter
-		if c_id is not None and str(c_id).startswith('#'):
-			c_id = int(filter(str.isdigit, c_id))
-		if c_id is None or not isinstance(c_id, int) or c_id < 0:
-			raise RuntimeError('Invalid camera identifier: ' + c_id)
+		if id is not None and str(id).startswith('#'):
+			id = int(filter(str.isdigit, id))
+		if id is None or not isinstance(id, int) or id < 0:
+			raise RuntimeError('Invalid camera identifier: ' + id)
 		# Initialize threading options
 		threading.Thread.__init__(self)
-		self.name = "Camera #" + str(c_id)
+		self.name = "Camera #" + str(id)
 		self._stop = threading.Event()
 		# Initialize class public variables (class parameters)
-		self._id = c_id
-		self._resolution = c_resolution
-		self._framerate = c_framerate
-		self._s_port = s_port
-		self._s_sleeptime = s_sleeptime
-		self._r_threshold = r_threshold
-		self._r_location = r_location
+		self._id = id
+		self._resolution = None
+		self._framerate = None
+		self._sleeptime = 0.05
+		# Streaming properties
+		self._s_sleep = 0.05
+		self._s_port = 9080
 		# Initialize class private variables
 		self._exec = False
 		self._lock = True
@@ -57,62 +55,17 @@ class Camera(threading.Thread):
 		self._stream = None
 		self._motion = None
 		# Identify type of camera and initialize camera device
-		self.setOnCamera()
+		self.setCameraOn()
 		# Activate recording if was specified during initialization
-		if recording:
-			self._applyRecording()
-		else:
-			self._recording = False
+		if motion:
+			self._applyMotion()
 		if streaming:
 			self._applyStreaming()
-		else:
-			self._streaming = False
 		self.log("Service has been initialized")
 
 	# Method: getId
 	def getId(self):
 		return self._id
-
-	# Method: setOnCamera
-	def setOnCamera(self):
-		if self._camera is None:
-			try:
-				self._lock = True
-				if self._id == 0:
-					self._camera = PiCamera()
-					if self._resolution is not None:
-						self._camera.resolution = self._resolution
-					if self._framerate is not None:
-						self._camera.framerate = self._framerate
-				else:
-					self._camera = cv.CaptureFromCAM(self._id - 1)
-					if self._resolution is not None:
-						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_WIDTH, self._resolution[0])
-						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_HEIGHT, self._resolution[1])
-					if self._framerate is not None:
-						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FPS, self._framerate)
-				self._lock = False
-			except BaseException as baseerr:
-				self.log(["Camera service initialization failed:", baseerr])
-		else:
-			self.log("Camera service is already started")
-
-	# Method: setOffCamera
-	def setOffCamera(self):
-		if self._camera is not None:
-			try:
-				self._lock = True
-				# For PiCamera call close method
-				if isinstance(self._camera, PiCamera):
-					self._camera.close()
-				# Destroy Camera instance
-				del self._camera
-				self._camera = None
-			except BaseException as baseerr:
-				self.log(["Camera service has been stopped with errors:", baseerr])
-				self._camera = None
-		else:
-			self.log("Camera service is already stopped")
 
 	# Method: getFrame
 	def getFrame(self):
@@ -133,163 +86,56 @@ class Camera(threading.Thread):
 				self._frame = cv.QueryFrame(self._camera)
 			cv.PutText(self._frame, "CAM " + str(self.getId()).rjust(2, '0'), (5, 15), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .35, .35, 0.0, 1, cv.CV_AA), (255, 255, 255))
 
-	# Method: _setRecording
-	def _applyRecording(self):
-		if self._motion is None:
-			self._motion = Motion(self)
-		self._recording = True
+	# Method: _applyMotion
+	def _applyMotion(self):
+		self._motion = Motion(self)
 
-	# Method: setOnRecording
-	def setOnRecording(self):
-		if not self.isRecording():
-			self._applyRecording()
-		else:
-			self.log("Recording function is already enabled")
-
-	# Method: setOffRecording
-	def setOffRecording(self):
-		if self.isRecording():
-			self._motion = None
-			self._recording = False
-		else:
-			self.log("Recording function is not enabled")
-
-	# Method: isRecording
-	def isRecording(self):
-		return self._recording
-
-	# Method: runRecording
-	def runRecording(self):
-		if self.isRecording() and self._motion is not None:
+	# Method: _runMotionDetection
+	def _runMotionDetection(self):
+		if self.isMotionEnabled():
 			frame = self.getFrame()
 			self._motion.detect(frame)
+
+	# Method: isMotionActive
+	def isMotionEnabled(self):
+		return self._motion is not None
 
 	# Method: _setStreaming
 	def _applyStreaming(self):
 		try:
-			self._stream = StreamServer(('0.0.0.0', self._s_port), StreamHandler, frame=self.getFrame(), sleeptime=self.getSleeptime())
+			self._stream = StreamServer(('0.0.0.0', self._s_port), StreamHandler, frame=self.getFrame(), sleeptime=self._s_sleep)
 			streamthread = threading.Thread(target=self._stream.serve_forever)
 			streamthread.daemon = True
 			streamthread.start()
 			self.log("Streaming started on " + str(self._stream.server_address))
-			self._streaming = True
 		except IOError as ioerr:
 			self.log(["Streaming initialization failed:", ioerr])
-			self._streaming = False
-
-	# Method: setOnStreaming
-	def setOnStreaming(self):
-		if not self.isStreaming():
-			self._applyStreaming()
-		else:
-			self.log("Streaming function is already enabled")
-
-	# Method: setOffStreaming
-	def setOffStreaming(self):
-		if self.isStreaming():
-			try:
-				self._stream.shutdown()
-				self._stream.server_close()
-				self._stream = None
-				self._streaming = False
-			except IOError as ioerr:
-				self.log(["Streaming function has been stopped with errors:", ioerr])
-		else:
-			self.log("Streaming function is not enabled")
-
-	# Method: isStreaming
-	def isStreaming(self):
-		return self._streaming
-
-	# Method: setStreamingPort
-	def setStreamingPort(self, port):
-		self._s_port = port
-
-	# Method: getStreamingPort
-	def getStreamingPort(self):
-		return self._s_port
-
-	# Method: setOnCamera
-	def setResolution(self, resolution):
-		if self._camera is not None and resolution is not None:
-			try:
-				self._lock = True
-				# Wait 1 second for the usecase when the resolution is set in the same time with the camera start
-				time.sleep(1)
-				# Set value
-				self._resolution = (int(resolution.split(',')[0].strip()), int(resolution.split(',')[1].strip()))
-				# Configure camera
-				if isinstance(self._camera, PiCamera):
-					self._camera.resolution = self._resolution
-				else:
-					cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_WIDTH, self._resolution[0])
-					cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_HEIGHT, self._resolution[1])
-				self._lock = False
-			except BaseException as baseerr:
-				self.log(["Applying camera resolution failed:", baseerr])
-
-	# Method: setFramerate
-	def setFramerate(self, framerate):
-		if self._camera is not None and framerate is not None:
-			try:
-				self._lock = True
-				# Set value
-				self._framerate = int(framerate)
-				# Configure camera
-				if isinstance(self._camera, PiCamera):
-					self._camera.framerate = self._framerate
-				else:
-					cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FPS, self._framerate)
-				self._lock = False
-			except BaseException as baseerr:
-				self.log(["Applying camera framerate failed:", baseerr])
+			self._stream = None
 
 	# Method: runStreaming
-	def runStreaming(self):
-		if self.isStreaming():
+	def _runStreamingBroadcast(self):
+		if self.isStreamingEnabled():
 			try:
 				if self._stream is not None:
 					self._stream.setFrame(self.getFrame())
 			except IOError as ioerr:
 				self.log(["Sending streaming data failed:", ioerr])
 
-	# Method: setSleeptime
-	def setSleeptime(self, sleeptime):
-		self._s_sleeptime = sleeptime
-		if self._stream is not None:
-			self._stream.setTimesleep(sleeptime)
-
-	# Method: getSleeptime
-	def getSleeptime(self):
-		return self._s_sleeptime
-
-	# Method: setRecordingLocation
-	def setRecordingLocation(self, location):
-		self._r_location = location
-
-	# Method: getRecordingLocation
-	def getRecordingLocation(self):
-		return self._r_location
-
-	# Method: setRecordingThreshold
-	def setRecordingThreshold(self, threshold):
-		self._r_threshold = threshold
-
-	# Method: getRecordingThreshold
-	def getRecordingThreshold(self):
-		return self._r_threshold
+	# Method: isStreaming
+	def isStreamingEnabled(self):
+		return self._stream is not None
 
 	# Method: stop
 	def stop(self):
 		self._exec = False
 		# Stop recording
-		if self.isRecording():
-			self.setOffRecording()
+		if self.isMotionEnabled():
+			self.setMotionOff()
 		# Stop streaming
-		if self.isStreaming():
-			self.setOffStreaming()
+		if self.isStreamingEnabled():
+			self.setStreamingOff()
 		# Stop camera
-		self.setOffCamera()
+		self.setCameraOff()
 		# Stop this thread
 		self._stop.set()
 		self.log("Service has been stopped")
@@ -313,14 +159,172 @@ class Camera(threading.Thread):
 				# Capture next frame
 				self.setFrame()
 				# If motion recording feature is active identify motion and save pictures
-				self.runRecording()
+				self._runMotionDetection()
 				# If the streaming is active send the picture through the streaming channel
-				self.runStreaming()
+				self._runStreamingBroadcast()
 				# Sleep for couple of seconds or milliseconds
-				time.sleep(self.getSleeptime())
+				time.sleep(self._sleeptime)
 			except BaseException as baserr:
 				self.log(["Camera workflow failed:", baserr])
 				self.stop()
+
+	# Method: setCameraOn
+	def setCameraOn(self):
+		if self._camera is None:
+			try:
+				self._lock = True
+				if self._id == 0:
+					self._camera = PiCamera()
+					if self._resolution is not None:
+						self._camera.resolution = self._resolution
+					if self._framerate is not None:
+						self._camera.framerate = self._framerate
+				else:
+					self._camera = cv.CaptureFromCAM(self._id - 1)
+					if self._resolution is not None:
+						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_WIDTH, self._resolution[0])
+						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_HEIGHT, self._resolution[1])
+					if self._framerate is not None:
+						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FPS, self._framerate)
+				self._lock = False
+			except BaseException as baseerr:
+				self.log(["Camera service initialization failed:", baseerr])
+		else:
+			self.log("Camera service is already started")
+
+	# Method: setCameraOff
+	def setCameraOff(self):
+		if self._camera is not None:
+			try:
+				self._lock = True
+				# For PiCamera call close method
+				if isinstance(self._camera, PiCamera):
+					self._camera.close()
+				# Destroy Camera instance
+				del self._camera
+				self._camera = None
+			except BaseException as baseerr:
+				self.log(["Camera service has been stopped with errors:", baseerr])
+				self._camera = None
+		else:
+			self.log("Camera service is already stopped")
+
+	# Method: setCameraResolution
+	def setCameraResolution(self, resolution):
+		if self._camera is not None and resolution is not None:
+			try:
+				self._lock = True
+				# Wait 1 second for the usecase when the resolution is set in the same time with the camera start
+				time.sleep(1)
+				# Set value
+				self._resolution = (int(resolution.split(',')[0].strip()), int(resolution.split(',')[1].strip()))
+				# Configure camera
+				if isinstance(self._camera, PiCamera):
+					self._camera.resolution = self._resolution
+				else:
+					cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_WIDTH, self._resolution[0])
+					cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_HEIGHT, self._resolution[1])
+				self._lock = False
+			except BaseException as baseerr:
+				self.log(["Applying camera resolution failed:", baseerr])
+
+	# Method: setCameraFramerate
+	def setCameraFramerate(self, framerate):
+		if self._camera is not None and framerate is not None:
+			try:
+				self._lock = True
+				# Set value
+				self._framerate = int(framerate)
+				# Configure camera
+				if isinstance(self._camera, PiCamera):
+					self._camera.framerate = self._framerate
+				else:
+					cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FPS, self._framerate)
+				self._lock = False
+			except BaseException as baseerr:
+				self.log(["Applying camera framerate failed:", baseerr])
+
+	# Method: setMotionOn
+	def setMotionOn(self):
+		if not self.isMotionEnabled():
+			self._applyMotion()
+		else:
+			self.log("Motion detection function is already enabled")
+
+	# Method: setMotionOff
+	def setMotionOff(self):
+		if self.isMotionEnabled():
+			self._motion = None
+		else:
+			self.log("Motion detection function is not enabled")
+
+	# Method: setMotionRecording
+	def setMotionRecording(self, recording):
+		if self.isMotionEnabled():
+			self._motion.setRecording(recording)
+		else:
+			self.log("Motion detection function is not enabled")
+
+	# Method: setMotionRecordingLocation
+	def setMotionRecordingLocation(self, location):
+		if self.isMotionEnabled():
+			self._motion.setLocation(location)
+		else:
+			self.log("Motion detection function is not enabled")
+
+	# Method: setMotionRecordingFormat
+	def setMotionRecordingFormat(self, format):
+		if self.isMotionEnabled():
+			self._motion.setFormat(format)
+		else:
+			self.log("Motion detection function is not enabled")
+
+	# Method: setMotionDetectionThreshold
+	def setMotionDetectionThreshold(self, threshold):
+		if self.isMotionEnabled():
+			self._motion.setThreshold(threshold)
+		else:
+			self.log("Motion detection function is not enabled")
+
+	# Method: setMotionDetectionContour
+	def setMotionDetectionContour(self, contour):
+		if self.isMotionEnabled():
+			self._motion.setContour(contour)
+		else:
+			self.log("Motion detection function is not enabled")
+
+	# Method: setStreamingOn
+	def setStreamingOn(self):
+		if not self.isStreamingEnabled():
+			self._applyStreaming()
+		else:
+			self.log("Streaming function is already enabled")
+
+	# Method: setStreamingOff
+	def setStreamingOff(self):
+		if self.isStreamingEnabled():
+			try:
+				self._stream.shutdown()
+				self._stream.server_close()
+				self._stream = None
+			except IOError as ioerr:
+				self.log(["Streaming function has been stopped with errors:", ioerr])
+				self._stream = None
+		else:
+			self.log("Streaming function is not enabled")
+
+	# Method: setStreamingPort
+	def setStreamingPort(self, port):
+		self._s_port = port
+		if self.isStreamingEnabled():
+			self.setStreamingOff()
+			self.setStreamingOn()
+
+	# Method: setStreamingSleep
+	def setStreamingSleep(self, sleep):
+		self._s_sleep = sleep
+		if self.isStreamingEnabled():
+			self._stream.setSleep(sleep)
 
 
 # Class: Motion
@@ -332,31 +336,78 @@ class Motion:
 		# Initialize engine parameters
 		self._gray = None
 		self._size = (320,240)
+		self._ismot = False
+		self._fkmot = 0
+		self._avmot = None
+		# Motion detection parametrization
+		self._format = 'image'
+		self._contour = True
+		self._recording = True
+		self._threshold = 1000
+		self._location = '/tmp'
+
+	# Method: isContour
+	def isContour(self):
+		return self._contour
+
+	# Method: setRecording
+	def setContour(self, contour):
+		self._contour = contour
 
 	# Method: isRecording
 	def isRecording(self):
-		return self._camera.isRecording()
+		return self._recording
+
+	# Method: setRecording
+	def setRecording(self, recording):
+		self._recording = recording
 
 	# Method: getThreshold
 	def getThreshold(self):
-		return self._camera.getRecordingThreshold()
+		return self._threshold
+
+	# Method: setThreshold
+	def setThreshold(self, threshold):
+		self._threshold = threshold
 
 	# Method: getLocation
 	def getLocation(self):
-		return self._camera.getRecordingLocation()
+		return self._location
+
+	# Method: setLocation
+	def setLocation(self, location):
+		self._location = location
+
+	# Method: getFormat
+	def getFormat(self):
+		return self._format
+
+	# Method: setFormat
+	def setFormat(self, format):
+		self._format = format
 
 	# Method: write
 	def write(self, frame, text, area=0):
 		try:
 			clone = cv.CloneImage(frame)
 			message = text + " @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
-			filename = self.getLocation() + os.path.sep + "cam" + str(self._camera.getId()).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-			if area > 0:
-				filename += "-" + str(area) + ".png"
-			else:
-				filename += ".png"
 			cv.PutText(clone, message, (10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .32, .32, 0.0, 1, cv.CV_AA), (255, 255, 255))
-			cv.SaveImage(filename, clone)
+			if self._format == 'image':
+				filename = self.getLocation() + os.path.sep + "cam" + str(self._camera.getId()).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+				if area > 0:
+					filename += "-" + str(area) + ".png"
+				else:
+					filename += ".png"
+				cv.SaveImage(filename, clone)
+			elif self._format == 'video':
+				if not self._ismot:
+					if self._avmot is not None:
+						del(self._avmot)
+						self._avmot = None
+					filename = self.getLocation() + os.path.sep + "cam" + str(self._camera.getId()).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".avi"
+					self._avmot = cv.CreateVideoWriter(filename, cv.CV_FOURCC('M', 'J', 'P', 'G'), 2, cv.GetSize(frame), True)
+				if self._ismot and self._avmot is not None:
+					cv.WriteFrame(self._avmot, clone)
 		except IOError as ioerr:
 			self._camera.log(["Saving motion data failed:", ioerr])
 			self._camera._recording = False
@@ -398,9 +449,10 @@ class Motion:
 			pt2 = ((bound_rect[0] + bound_rect[2]) * xsize, (bound_rect[1] + bound_rect[3]) * ysize)
 			# Add this latest bounding box to the overall area that is being detected as movement
 			area += ((pt2[0] - pt1[0]) * (pt2[1] - pt1[1]))
-			points.append(pt1)
-			points.append(pt2)
-			cv.Rectangle(frame, pt1, pt2, cv.CV_RGB(255,0,0), 1)
+			if self.isContour():
+				points.append(pt1)
+				points.append(pt2)
+				cv.Rectangle(frame, pt1, pt2, cv.CV_RGB(255,0,0), 1)
 		return area
 
 	# Method: detect
@@ -418,6 +470,13 @@ class Motion:
 				# Evaluation
 				if self.isRecording() and _area > self.getThreshold():
 					self.write(frame, "Motion detected", _area)
+					self._ismot = True
+					self._fkmot = 0
+				if self._ismot and self.isRecording() and _area <= self.getThreshold():
+					self._fkmot += 1
+					if self._fkmot > 10:
+						self._ismot = False
+						self._fkmot = 0
 				self._gray = _gray
 
 
@@ -442,6 +501,8 @@ class PiCamServerHandler(BaseRequestHandler):
 			# Action and subject evaluation
 			if data.action == 'echo' and (data.subject is None or data.subject == 'server'):
 				self.runEchoServer()
+			if data.action == 'status' and (data.subject is None or data.subject == 'server'):
+				self.runStatusServer()
 			if data.action == 'stop' and data.subject == 'server':
 				self.runStopServer()
 			if data.action == 'start' and data.subject == 'service':
@@ -515,6 +576,10 @@ class PiCamServerHandler(BaseRequestHandler):
 	def runEchoServer(self):
 		self.log(__project__ + " " + __module__ + " " + __version__ + ", " + __license__ + ", " + __copyright__, toClient=True)
 
+	# Method: runStatusServer
+	def runStatusServer(self):
+		self.runEchoServer()
+
 	# Method: runSetProperty
 	def runSetProperty(self, data):
 		# Translate enable and disable actions
@@ -532,30 +597,30 @@ class PiCamServerHandler(BaseRequestHandler):
 			# Evaluate streaming property
 			if camprop == data.getProperties()[0]:
 				if str2bool(camdata):
-					camera.setOnStreaming()
+					camera.setStreamingOn()
 				else:
-					camera.setOffStreaming()
+					camera.setStreamingOff()
 			# Evaluate recording property
 			elif camprop == data.getProperties()[1]:
 				if str2bool(camdata):
-					camera.setOnRecording()
+					camera.setMotionOn()
 				else:
-					camera.setOffRecording()
+					camera.setMotionOff()
 			# Evaluate resolution property
 			elif camprop == data.getProperties()[2]:
-				camera.setResolution(camdata)
+				camera.setCameraResolution(camdata)
 			# Evaluate threshold property
 			elif camprop == data.getProperties()[3]:
-				camera.setRecordingThreshold(int(camdata))
+				camera.setMotionDetectionThreshold(int(camdata))
 			# Evaluate location property
 			elif camprop == data.getProperties()[4]:
-				camera.setRecordingLocation(str(camdata))
+				camera.setMotionRecordingLocation(str(camdata))
 			# Evaluate sleeptime property
 			elif camprop == data.getProperties()[5]:
-				camera.setSleeptime(float(camdata))
+				camera.setSleep(float(camdata))
 			# Evaluate framerate property
 			elif camprop == data.getProperties()[6]:
-				camera.setFramerate(camdata)
+				camera.setCameraFramerate(camdata)
 			# Answer to client
 			self.log("Property '" + data.property + "' has been applied on camera " + data.target, toClient=True)
 		else:
@@ -620,7 +685,7 @@ class StreamHandler(BaseHTTPRequestHandler):
 				self.end_headers()
 				self.wfile.write(JpegData)
 				self.wfile.write("\r\n")
-				time.sleep(self._server.getTimesleep())
+				time.sleep(self._server.getSleep())
 			return
 		except BaseException as baseerr:
 			self.send_error(500, 'PiCam Streaming Server Error: \r\n\r\n%s' % str(baseerr))
@@ -634,10 +699,10 @@ class StreamServer(ThreadingMixIn, HTTPServer):
 	daemon_threads = True
 
 	# Constructor
-	def __init__(self, server_address, handler, bind_and_activate=True, frame=None, sleeptime=0.05):
+	def __init__(self, server_address, handler, bind_and_activate=True, frame=None, sleep=0.05):
 		HTTPServer.__init__(self, server_address, handler, bind_and_activate=bind_and_activate)
 		self._frame = frame
-		self._sleeptime = sleeptime
+		self._sleep = sleep
 
 	# Method: getFrame
 	def getFrame(self):
@@ -648,12 +713,12 @@ class StreamServer(ThreadingMixIn, HTTPServer):
 		self._frame = frame
 
 	# Method: getTimesleep
-	def getTimesleep(self):
-		return self._sleeptime
+	def getSleep(self):
+		return self._sleep
 
 	# Method: setTimesleep
-	def setTimesleep(self, sleeptime):
-		self._sleeptime = sleeptime
+	def setSleep(self, sleeptime):
+		self._sleep = sleeptime
 
 
 # Class: PiCamClient

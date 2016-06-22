@@ -38,7 +38,7 @@ class MyHandler(BaseHTTPRequestHandler):
 				self.wfile.write(JpegData)
 				self.wfile.write("\r\n")
 				
-				time.sleep(self._server.getTimesleep())
+				time.sleep(self._server.getSleep())
 			return
 		except BaseException as baseerr:
 			self.send_error(500,'PiCam Streaming Server Error: \r\n\r\n%s' % str(baseerr))
