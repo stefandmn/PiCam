@@ -39,7 +39,7 @@ class Camera(threading.Thread):
 		self._stop = threading.Event()
 		# Initialize class public variables (class parameters)
 		self._id = id
-		self._resolution = None
+		self._resolution = (640,480)
 		self._framerate = None
 		self._sleeptime = 0.05
 		# Streaming properties
@@ -91,12 +91,12 @@ class Camera(threading.Thread):
 
 	# Method: _runMotionDetection
 	def _runMotionDetection(self):
-		if self.isMotionEnabled():
+		if self.isMotionDetectionEnabled():
 			frame = self.getFrame()
 			self._motion.detect(frame)
 
 	# Method: isMotionActive
-	def isMotionEnabled(self):
+	def isMotionDetectionEnabled(self):
 		return self._motion is not None
 
 	# Method: _setStreaming
@@ -128,7 +128,7 @@ class Camera(threading.Thread):
 	def stop(self):
 		self._exec = False
 		# Stop recording
-		if self.isMotionEnabled():
+		if self.isMotionDetectionEnabled():
 			self.setMotionOff()
 		# Stop streaming
 		if self.isStreamingEnabled():
@@ -176,15 +176,23 @@ class Camera(threading.Thread):
 					self._camera = PiCamera()
 					if self._resolution is not None:
 						self._camera.resolution = self._resolution
+					else:
+						self._resolution = self._camera.resolution
 					if self._framerate is not None:
 						self._camera.framerate = self._framerate
+					else:
+						self._framerate = self._camera.framerate
 				else:
 					self._camera = cv.CaptureFromCAM(self._id - 1)
 					if self._resolution is not None:
 						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_WIDTH, self._resolution[0])
 						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_HEIGHT, self._resolution[1])
+					else:
+						self._resolution = (cv.GetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_WIDTH), cv.GetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_HEIGHT))
 					if self._framerate is not None:
 						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FPS, self._framerate)
+					else:
+						self._framerate = cv.GetCaptureProperty(self._camera, cv.CV_CAP_PROP_FPS)
 				self._lock = False
 			except BaseException as baseerr:
 				self.log(["Camera service initialization failed:", baseerr])
@@ -249,52 +257,62 @@ class Camera(threading.Thread):
 
 	# Method: setMotionOn
 	def setMotionOn(self):
-		if not self.isMotionEnabled():
+		if not self.isMotionDetectionEnabled():
 			self._applyMotion()
 		else:
 			self.log("Motion detection function is already enabled")
 
 	# Method: setMotionOff
 	def setMotionOff(self):
-		if self.isMotionEnabled():
+		if self.isMotionDetectionEnabled():
 			self._motion = None
 		else:
 			self.log("Motion detection function is not enabled")
 
 	# Method: setMotionDetectionRecording
 	def setMotionDetectionRecording(self, recording):
-		if self.isMotionEnabled():
+		if self.isMotionDetectionEnabled():
 			self._motion.setRecording(recording)
 		else:
-			self.log("Motion detection function is not enabled")
+			self.log("Motion detection will be activated for recording")
+			self.setMotionOn()
+			self._motion.setRecording(recording)
 
 	# Method: setMotionRecordingLocation
 	def setMotionRecordingLocation(self, location):
-		if self.isMotionEnabled():
+		if self.isMotionDetectionEnabled():
 			self._motion.setLocation(location)
 		else:
-			self.log("Motion detection function is not enabled")
+			self.log("Motion detection function will be activated to set recording location")
+			self.setMotionOn()
+			self._motion.setLocation(location)
 
 	# Method: setMotionRecordingFormat
 	def setMotionRecordingFormat(self, format):
-		if self.isMotionEnabled():
+		if self.isMotionDetectionEnabled():
 			self._motion.setFormat(format)
 		else:
-			self.log("Motion detection function is not enabled")
+			self.log("Motion detection function will be activated to set recording format")
+			self.setMotionOn()
+			self._motion.setFormat(format)
 
 	# Method: setMotionRecordingThreshold
 	def setMotionRecordingThreshold(self, threshold):
-		if self.isMotionEnabled():
+		if self.isMotionDetectionEnabled():
 			self._motion.setThreshold(threshold)
 		else:
-			self.log("Motion detection function is not enabled")
+			self.log("Motion detection function will be activated to set recording threshold")
+			self.setMotionOn()
+			self._motion.setThreshold(threshold)
 
 	# Method: setMotionDetectionContour
 	def setMotionDetectionContour(self, contour):
-		if self.isMotionEnabled():
+		if self.isMotionDetectionEnabled():
 			self._motion.setContour(contour)
 		else:
-			self.log("Motion detection function is not enabled")
+			self.log("Motion detection function will be activated to set motion contour")
+			self.setMotionOn()
+			self._motion.setContour(contour)
 
 	# Method: setStreamingOn
 	def setStreamingOn(self):
@@ -328,6 +346,46 @@ class Camera(threading.Thread):
 		self._s_sleep = sleep
 		if self.isStreamingEnabled():
 			self._stream.setSleep(sleep)
+
+	# Method: getCameraResolution
+	def getCameraResolution(self):
+		return self._resolution
+
+	# Method: getCameraSleeptime
+	def getCameraSleeptime(self):
+		return self._sleeptime
+
+	# Method: getCameraFramerate
+	def getCameraFramerate(self):
+		return self._framerate
+
+	# Method: getStreamingPort
+	def getStreamingPort(self):
+		return self._s_port
+
+	# Method: getStreamingSleep
+	def getStreamingSleep(self):
+		return self._s_sleep
+
+	# Method: getMotionDetectionRecording
+	def getMotionDetectionRecording(self):
+		return self._motion.isRecording()
+
+	# Method: getMotionRecordingFormat
+	def getMotionRecordingFormat(self):
+		return self._motion.getFormat()
+
+	# Method: getMotionRecordingLocation
+	def getMotionRecordingLocation(self):
+		return self._motion.getLocation()
+
+	# Method: getMotionRecordingThreshold
+	def getMotionRecordingThreshold(self):
+		return self._motion.getThreshold()
+
+	# Method: getMotionDetectionContour
+	def getMotionDetectionContour(self):
+		return self._motion.isContour()
 
 
 # Class: Motion
@@ -581,7 +639,35 @@ class PiCamServerHandler(BaseRequestHandler):
 
 	# Method: runStatusServer
 	def runStatusServer(self):
-		self.runEchoServer()
+		text = __project__ + " " + __module__ + " " + __version__
+		text += '\n\t> server: ' + str(self._server.server_address)
+		if self._server.getCameras():
+			keys = self._server.getCameras().keys()
+			for key in keys:
+				camera = self._server.getCameras()[key]
+				text += '\n\t> camera #' + camera.getId()
+				text += '\n\t\t|| resolution: ' + camera.getCameraResolution()
+				text += '\n\t\t|| framerate: ' + camera.getCameraFramerate()
+				text += '\n\t\t|| sleeptime: ' + camera.getCameraSleeptime()
+				if camera.isStreamingEnabled():
+					text += '\n\t\t| streaming: ON'
+					text += '\n\t\t\t|| port: ' + camera.getStreamingPort()
+					text += '\n\t\t\t|| sleep: ' + camera.getStreamingSleep()
+				else:
+					text += '\n\t\t| streaming: OFF'
+				if camera.isMotionDetectionEnabled():
+					text += '\n\t\t| motion detection: ON'
+					if camera.getMotionDetectionRecording():
+						text += '\n\t\t\t| recording: ON'
+						text += '\n\t\t\t\t|| format: ' + camera.getMotionRecordingFormat()
+						text += '\n\t\t\t\t|| location: ' + camera.getMotionRecordingLocation()
+						text += '\n\t\t\t\t|| threshold: ' + camera.getMotionRecordingThreshold()
+					else:
+						text += '\n\t\t\t| recording: OFF'
+					text += '\n\t\t\t| contour: ' + ('ON' if camera.getMotionDetectionContour() else 'OFF')
+				else:
+					text += '\n\t\t| motion detection: OFF'
+		self.log(text, toClient=True)
 
 	# Method: runSetProperty
 	def runSetProperty(self, data):
@@ -1027,11 +1113,11 @@ Examples:
   = run client to start on server camera #1. The client will connect to server using default port
 > picam enable recording on c0
   = run client (using default hostname and port) aggregating command from all input parameters
-> picam -c "set parameter resolution=1280,720 on c1" -h "192.168.0.100" -p 6400
-> picam --command="set parameter resolution=1280,720 on c1" --host="127.0.0.1" --port=6400
+> picam -c "set property CameraResolution=1280,720 on c1" -h "192.168.0.100" -p 6400
+> picam --command="set property CameraResolution=1280,720 on c1" --host="127.0.0.1" --port=6400
   = run client that will send the command described by a specific option to a dedicated server
-> picam "start server and start service on #0 and enable property streaming on #0 and enable property recording on #0"
-  = this is a composed command (by 'and' operator) which can start the server, camera #0 and other. This kind of composed command could be run directly when you start the server or you can executed from client
+> picam "start server and start service on #0 and enable property CameraStreaming on #0 and enable property MotionDetectionRecording on #0"
+  = this is a composed command (by 'and' operator) which can start the server, camera #0 and others. This kind of composed command could be run directly when you start the server or you can executed from client
 > picam -f /opt/clue/etc/picam.cfg
   = run picam application using a configuration file (a file with commands), able to start the server or to run specific client actions
 """
