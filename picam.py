@@ -6,7 +6,7 @@ __author__ = "SDA"
 __email__ = "damian.stefan@gmail.com"
 __copyright__ = "Copyright (C) 2015-2016, AMSD"
 __license__ = "GPL"
-__version__ = "1.1.8"
+__version__ = "1.1.9"
 __verbose__ = True
 
 import os
@@ -641,28 +641,28 @@ class PiCamServerHandler(BaseRequestHandler):
 			keys = self._server.getCameras().keys()
 			for key in keys:
 				camera = self._server.getCameras()[key]
-				text += '\n\t> camera: #' + str(camera.getId())
-				text += '\n\t\t|| resolution: ' + ('None' if camera.getCameraResolution() is None else str(camera.getCameraResolution()[0]) + 'x' + str(camera.getCameraResolution()[1]))
-				text += '\n\t\t|| framerate: ' + any2str(camera.getCameraFramerate())
-				text += '\n\t\t|| sleeptime: ' + any2str(camera.getCameraSleeptime())
+				text += '\n\t> service: #' + str(camera.getId())
 				if camera.isStreamingEnabled():
-					text += '\n\t\t| streaming: ON'
-					text += '\n\t\t\t|| port: ' + any2str(camera.getStreamingPort())
-					text += '\n\t\t\t|| sleep: ' + any2str(camera.getStreamingSleep())
+					text += '\n\t\t| CameraStreaming: ON'
+					text += '\n\t\t\t|| StreamingPort: ' + any2str(camera.getStreamingPort())
+					text += '\n\t\t\t|| StreamingSleeptime: ' + any2str(camera.getStreamingSleep())
 				else:
-					text += '\n\t\t| streaming: OFF'
+					text += '\n\t\t| CameraStreaming: OFF'
 				if camera.isMotionDetectionEnabled():
-					text += '\n\t\t| motion detection: ON'
+					text += '\n\t\t| CameraMotionDetection: ON'
 					if camera.getMotionDetectionRecording():
-						text += '\n\t\t\t| recording: ON'
-						text += '\n\t\t\t\t|| format: ' + any2str(camera.getMotionRecordingFormat())
-						text += '\n\t\t\t\t|| location: ' + any2str(camera.getMotionRecordingLocation())
-						text += '\n\t\t\t\t|| threshold: ' + any2str(camera.getMotionRecordingThreshold())
+						text += '\n\t\t\t| MotionDetectionRecording: ON'
+						text += '\n\t\t\t\t|| MotionRecordingFormat: ' + any2str(camera.getMotionRecordingFormat())
+						text += '\n\t\t\t\t|| MotionRecordingLocation: ' + any2str(camera.getMotionRecordingLocation())
+						text += '\n\t\t\t\t|| MotionRecordingThreshold: ' + any2str(camera.getMotionRecordingThreshold())
 					else:
-						text += '\n\t\t\t| recording: OFF'
-					text += '\n\t\t\t| contour: ' + ('ON' if camera.getMotionDetectionContour() else 'OFF')
+						text += '\n\t\t\t| MotionDetectionRecording: OFF'
+					text += '\n\t\t\t| MotionDetectionContour: ' + ('ON' if camera.getMotionDetectionContour() else 'OFF')
 				else:
-					text += '\n\t\t| motion detection: OFF'
+					text += '\n\t\t| CameraMotionDetection: OFF'
+				text += '\n\t\t|| CameraResolution: ' + ('None' if camera.getCameraResolution() is None else str(camera.getCameraResolution()[0]) + 'x' + str(camera.getCameraResolution()[1]))
+				text += '\n\t\t|| CameraFramerate: ' + any2str(camera.getCameraFramerate())
+				text += '\n\t\t|| CameraSleeptime: ' + any2str(camera.getCameraSleeptime())
 		self.log(text, toClient=True)
 
 	# Method: runSetProperty
