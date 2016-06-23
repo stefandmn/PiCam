@@ -6,8 +6,8 @@ __author__ = "SDA"
 __email__ = "damian.stefan@gmail.com"
 __copyright__ = "Copyright (C) 2015-2016, AMSD"
 __license__ = "GPL"
-__version__ = "1.1.7"
-__verbose__ = False
+__version__ = "1.1.8"
+__verbose__ = True
 
 import os
 import io
@@ -102,7 +102,7 @@ class Camera(threading.Thread):
 	# Method: _setStreaming
 	def _applyStreaming(self):
 		try:
-			self._stream = StreamServer(('0.0.0.0', self._s_port), StreamHandler, frame=self.getFrame(), sleeptime=self._s_sleep)
+			self._stream = StreamServer(('0.0.0.0', self._s_port), StreamHandler, frame=self.getFrame(), sleep=self._s_sleep)
 			streamthread = threading.Thread(target=self._stream.serve_forever)
 			streamthread.daemon = True
 			streamthread.start()
@@ -187,12 +187,8 @@ class Camera(threading.Thread):
 					if self._resolution is not None:
 						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_WIDTH, self._resolution[0])
 						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_HEIGHT, self._resolution[1])
-					else:
-						self._resolution = (cv.GetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_WIDTH), cv.GetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_HEIGHT))
 					if self._framerate is not None:
 						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FPS, self._framerate)
-					else:
-						self._framerate = cv.GetCaptureProperty(self._camera, cv.CV_CAP_PROP_FPS)
 				self._lock = False
 			except BaseException as baseerr:
 				self.log(["Camera service initialization failed:", baseerr])
@@ -535,7 +531,7 @@ class Motion:
 					self._fkmot = 0
 				if self._ismot and self.isRecording() and _area <= self.getThreshold():
 					self._fkmot += 1
-					if self._fkmot > 10:
+					if self._fkmot > 59:
 						self._ismot = False
 						self._fkmot = 0
 				self._gray = _gray
@@ -639,29 +635,29 @@ class PiCamServerHandler(BaseRequestHandler):
 
 	# Method: runStatusServer
 	def runStatusServer(self):
-		text = __project__ + " " + __module__ + " " + __version__
-		text += '\n\t> server: ' + str(self._server.server_address)
+		text = "Status of " + __project__ + " " + __module__ + " " + __version__
+		text += '\n\t> server: ' + str(self._server.server_address[0]) + ':' + str(self._server.server_address[1])
 		if self._server.getCameras():
 			keys = self._server.getCameras().keys()
 			for key in keys:
 				camera = self._server.getCameras()[key]
-				text += '\n\t> camera #' + camera.getId()
-				text += '\n\t\t|| resolution: ' + camera.getCameraResolution()
-				text += '\n\t\t|| framerate: ' + camera.getCameraFramerate()
-				text += '\n\t\t|| sleeptime: ' + camera.getCameraSleeptime()
+				text += '\n\t> camera: #' + str(camera.getId())
+				text += '\n\t\t|| resolution: ' + ('None' if camera.getCameraResolution() is None else str(camera.getCameraResolution()[0]) + 'x' + str(camera.getCameraResolution()[1]))
+				text += '\n\t\t|| framerate: ' + any2str(camera.getCameraFramerate())
+				text += '\n\t\t|| sleeptime: ' + any2str(camera.getCameraSleeptime())
 				if camera.isStreamingEnabled():
 					text += '\n\t\t| streaming: ON'
-					text += '\n\t\t\t|| port: ' + camera.getStreamingPort()
-					text += '\n\t\t\t|| sleep: ' + camera.getStreamingSleep()
+					text += '\n\t\t\t|| port: ' + any2str(camera.getStreamingPort())
+					text += '\n\t\t\t|| sleep: ' + any2str(camera.getStreamingSleep())
 				else:
 					text += '\n\t\t| streaming: OFF'
 				if camera.isMotionDetectionEnabled():
 					text += '\n\t\t| motion detection: ON'
 					if camera.getMotionDetectionRecording():
 						text += '\n\t\t\t| recording: ON'
-						text += '\n\t\t\t\t|| format: ' + camera.getMotionRecordingFormat()
-						text += '\n\t\t\t\t|| location: ' + camera.getMotionRecordingLocation()
-						text += '\n\t\t\t\t|| threshold: ' + camera.getMotionRecordingThreshold()
+						text += '\n\t\t\t\t|| format: ' + any2str(camera.getMotionRecordingFormat())
+						text += '\n\t\t\t\t|| location: ' + any2str(camera.getMotionRecordingLocation())
+						text += '\n\t\t\t\t|| threshold: ' + any2str(camera.getMotionRecordingThreshold())
 					else:
 						text += '\n\t\t\t| recording: OFF'
 					text += '\n\t\t\t| contour: ' + ('ON' if camera.getMotionDetectionContour() else 'OFF')
@@ -998,11 +994,11 @@ class StateData:
 			raise RuntimeError("Invalid or null client command")
 		# Validate obtained data structure
 		if (self.action == "start" or self.action == "stop" or self.action == "status") and not (self.subject == "server" or self.subject == "service"):
-			raise RuntimeError("Invalid subject of start/stop/status action: " + self.subject)
+			raise RuntimeError("Invalid subject of start/stop/status action: " + any2str(self.subject))
 		elif (self.action == "set" or self.action == "enable" or self.action == "disable") and self.subject != "property":
-			raise RuntimeError("Invalid action for property action: " + self.action)
+			raise RuntimeError("Invalid action for property action: " + any2str(self.action))
 		elif self.subject == 'server' and self.target is not None:
-			raise RuntimeError("Invalid subject for the specified target: " + self.subject)
+			raise RuntimeError("Invalid subject for the specified target: " + any2str(self.subject))
 		elif self.action is None or self.action == '':
 			raise RuntimeError("Action can not be null")
 		elif self.subject is None or self.subject == '':
@@ -1132,6 +1128,12 @@ def str2bool(v):
 	else:
 		return None
 
+# Function: str2bool
+def any2str(v):
+	if v is not None:
+		return str(v)
+	else:
+		return 'None'
 
 # Function: cmdfile
 def cmdfile(file, command=''):
