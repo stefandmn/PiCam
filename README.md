@@ -25,10 +25,24 @@ If the application parameters are used (to specify the interface, host or the po
 If you want to start **picam** application using a configuration file you have to specify one of the options `-f` or `--file` with a valid file path. The configuration should include commands separated by end of line. Comment lines could be specified by prefixing the line with `#` character. Empty lines are ignored.
 
 The commands accepted by PiCam client and server components have been defined around to a simple grammar that contains only three elements:
-- **subject** - the corresponding values are: **server**, **service**, **property**
-- **action** - the implemented actions are: **start**, **stop**, **set**, **enable**, **disable**, **echo**, **status**
-- **properties** - possible values are: **CameraStreaming**, **CameraMotionDetection**, **CameraResolution**, **CameraFramerate**, **CameraSleeptime**, **MotionDetectionContour**, **MotionDetectionRecording**, **MotionRecordingFormat**, **MotionRecordingThreshold**, **MotionRecordingLocation**, **StreamingPort**, **StreamingSleeptime**
-- **articles** - used target indicators are: **to**, **at**, **on**, **in**, **@**. After the article you have to specify the camera target (#0, #1, .. - so the camera target is the camera index having `#` prefix).
+ - **subject** - the corresponding values are: **server**, **service**, **property**
+ - **action** - the implemented actions are: **start**, **stop**, **set**, **enable**, **disable**, **echo**, **status**
+ - **properties** - possible values are: 
+   - **CameraStreaming** = activate/de-activate streaming service for a specific camera (by default the camera does not start with active streaming channel), 
+   - **CameraMotionDetection** = activate/de-activate motion detection (by default any activated camera/service will use start motion detection service), 
+   - **CameraResolution** = set camera resolution (by default the resolution for any attached camera is 640x480, 
+   - **CameraFramerate** = set camera framerate (no default value is used, the camera uses the framerate set by default by manufacturer), 
+   - **CameraSleeptime** = sleeping time between two frames (it could be considered a second framerate but provided by the application), 
+   - **MotionDetectionContour** = activate/de-activate to draw a contour for detected motion on each camera frame (by default it is active), 
+   - **MotionDetectionRecording** = activate/de-activate recording (in pictures or videos) for detected motion; by default the option is enabled, 
+   - **MotionRecordingFormat** = set the recording format for motion detection; the possible values could be `image` or `video` (default value is _image_), 
+   - **MotionRecordingThreshold** = set the motion detection threshold for recording; any motion 'volume' over this value will be recorded, 
+   - **MotionRecordingLocation** = set the recording location, 
+   - **StreamingPort** = set streaming port, 
+   - **StreamingSleeptime** = set streaming sleeping time between displayed frames.
+ - **articles** - used target indicators are: **to**, **at**, **on**, **in**, **@**. After the article you have to specify the camera target (#0, #1, .. - so the camera target is the camera index having `#` prefix).
+
+**Note**: Usage of any `MotionRecording*` property will activate automatically `CameraMotionDetection`service. 
 
 With three elements you can compose any command (the order of elements is arbitrary) that could run in client interface. For instance if you want to start the Pi camera you can define and run one of the following commands:
 `start service on #0` or `service start on #0` or `on #1 start service`
@@ -47,3 +61,4 @@ If you want to start to use this application you have to perform the following s
 6. (Optional) If you want to start the second USB camera you have to execute the following command: `pycam.py "start service on #2 or enable property CameraStreaming on #2"`
 7. (Optional) If you want to run motion detection for the first camera you need to open another shell console and to execute the following command: `pycam.py "enable property MotionDetectionRecording on #1"`. **Attention!** it will store image samples in `/tmp` folder. _Please notice that **MotionDetectionRecording** activates also **CameraMotionDetection** property._ 
 8. (Optional) If you want to change the default location where the motion detection samples are store execute the following command: `pycam.py "set property MotionRecordingLocation=/mnt/data on #1"`.
+9. (Optional) If you want to see the PiCam server configuration and all activates service just run `pycam.py server status`. This client command will interrogate the server from localhost, if you want to interrogate a remote server just use the command line option described before (`-c` to aggreate the command into one single text and `-h` to specifiy the server hostname)
