@@ -25,8 +25,18 @@ If the application parameters are used (to specify the interface, host or the po
 If you want to start **picam** application using a configuration file you have to specify one of the options `-f` or `--file` with a valid file path. The configuration should include commands separated by end of line. Comment lines could be specified by prefixing the line with `#` character. Empty lines are ignored.
 
 The commands accepted by PiCam client and server components have been defined around to a simple grammar that contains only three elements:
- - **subject** - the corresponding values are: **server**, **service**, **property**
- - **action** - the implemented actions are: **start**, **stop**, **set**, **enable**, **disable**, **echo**, **status**
+ - **subject** - the corresponding values are: 
+   - **server** = PiCam server instance, 
+   - **service** = camera service (when a camera becomes active means a service identified by camera #id has been started), 
+   - **property** = camera or related services property (see the list of implemented properties, documented below)
+ - **action** - the implemented actions are: 
+   - **start** = start server instance or a service (camera), 
+   - **stop** = stop server instance or a service (camera), 
+   - **set** = set a camera property, 
+   - **enable** = activate a camera property (or a camera service), 
+   - **disable** = de-activate a camera property (or a camera service), 
+   - **echo** = ask for a server echo, 
+   - **status** = ask for server configuration and detail status
  - **properties** - possible values are: 
    - **CameraStreaming** = activate/de-activate streaming service for a specific camera (by default the camera does not start with active streaming channel), 
    - **CameraMotionDetection** = activate/de-activate motion detection (by default any activated camera/service will use start motion detection service), 
