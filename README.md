@@ -52,7 +52,7 @@ The commands accepted by PiCam client and server components have been defined ar
    - **StreamingSleeptime** = set streaming sleeping time between displayed frames.
  - **articles** - used target indicators are: **to**, **at**, **on**, **in**, **@**. After the article you have to specify the camera target (#0, #1, .. - so the camera target is the camera index having `#` prefix).
 
-**Note**: Usage of any `MotionRecording*` property will activate automatically `CameraMotionDetection`service. 
+**Note**: Usage of any `MotionRecording**` property will activate automatically `CameraMotionDetection`service. 
 
 With three elements you can compose any command (the order of elements is arbitrary) that could run in client interface. For instance if you want to start the Pi camera you can define and run one of the following commands:
 `start service on #0` or `service start on #0` or `on #1 start service`
