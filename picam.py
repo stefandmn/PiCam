@@ -6,8 +6,8 @@ __author__ = "SDA"
 __email__ = "damian.stefan@gmail.com"
 __copyright__ = "Copyright (C) 2015-2016, AMSD"
 __license__ = "GPL"
-__version__ = "1.1.9"
-__verbose__ = True
+__version__ = "1.2.0"
+__verbose__ = False
 
 import os
 import io
@@ -490,8 +490,8 @@ class Motion:
 		cv.Erode(frame, frame, None, 10)
 		return frame
 
-	# Method: contour
-	def contour(self, move, frame):
+	# Method: area
+	def area(self, move, frame):
 		points = []
 		area = 0
 		xsize = cv.GetSize(frame)[0] / self._size[0]
@@ -523,17 +523,18 @@ class Motion:
 				_gray = self.gray(frame)
 				_diff = self.absdiff(self._gray, _gray)
 				_move = self.threshold(_diff)
-				_area = self.contour(_move, frame)
+				_area = self.area(_move, frame)
 				# Evaluation
-				if self.isRecording() and _area > self.getThreshold():
-					self.write(frame, "Motion detected", _area)
-					self._ismot = True
-					self._fkmot = 0
-				if self._ismot and self.isRecording() and _area <= self.getThreshold():
-					self._fkmot += 1
-					if self._fkmot > 59:
-						self._ismot = False
+				if self.isRecording():
+					if _area > self.getThreshold():
+						self.write(frame, "Motion detected", _area)
+						self._ismot = True
 						self._fkmot = 0
+					elif self._ismot:
+						self._fkmot += 1
+						if self._fkmot > 59:
+							self._ismot = False
+							self._fkmot = 0
 				self._gray = _gray
 
 
