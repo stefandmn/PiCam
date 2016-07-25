@@ -954,19 +954,28 @@ class PiCamClient:
 				while True:
 					answer = client.recv(1024)
 					if answer is not None and answer != '' and answer != "END":
-						jsonanswer = json.load(answer)
-						# Evaluate answer
-						if jsonanswer is not None:
-							message = jsonanswer["message"]
-							if jsonanswer["achieved"]:
-								level = "INFO"
+						if not self._api:
+							# Get JSON structure
+							jsonanswer = json.load(answer)
+							# Read message type and value to be displayed to STD output
+							if jsonanswer is not None:
+								message = jsonanswer["message"]
+								if jsonanswer["achieved"]:
+									level = "INFO"
+								else:
+									level = "ERROR"
 							else:
+								message = "Server message could not be translated: " + str(answer)
 								level = "ERROR"
+							# Display message to standard output
+							if jsonanswer["action"] == "echo":
+								self.log(self.echo(jsonanswer), type="INFO", server=True)
+							elif jsonanswer["action"] == "echo":
+								self.log(self.status(jsonanswer), type="INFO", server=True)
+							elif message is not None:
+								self.log(message, type=level, server=True)
 						else:
-							message = "Server message could not be translated: " + str(answer)
-							level = "ERROR"
-						# Display message to standard output
-						self.log(message, type=level, server=True)
+							self._apiData.append(answer)
 					else:
 						break
 				client.close()
@@ -994,7 +1003,7 @@ class PiCamClient:
 					try:
 						_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 						_socket.connect(("localhost", self._port))
-						_socket.sendall("stop server")
+						_socket.sendall("shutdown server")
 						_socket.close()
 					except:
 						# Nothing to do here
@@ -1014,6 +1023,44 @@ class PiCamClient:
 				print "%s | %s Client > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), type, message)
 			else:
 				print "%s | %s Server > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), type, message)
+
+	# Method: echo
+	def echo(self, answer):
+		if answer is not None and answer["result"] is not None:
+			return answer["result"]["project"] + " " + answer["result"]["module"] + " " + answer["result"]["version"] + ", " + answer["result"]["license"] + ", " + answer["result"]["copyright"]
+		else:
+			return ""
+
+	# Method: status
+	def status(self, answer):
+		if answer is not None and answer["result"] is not None:
+			text = "Status of " + answer["result"]["project"] + " " + answer["result"]["module"] + " " + answer["result"]["version"]
+			text += '\n\t> server: ' + answer["result"]["server"] + ":" + answer["result"]["port"]
+			for service in answer["result"]["services"]:
+				text += '\n\t> service: #' + service["CameraId"]
+				if service["CameraStreaming"]:
+					text += '\n\t\t| CameraStreaming: On'
+					text += '\n\t\t\t|| StreamingPort: ' + any2str(service["StreamingPort"])
+					text += '\n\t\t\t|| StreamingSleeptime: ' + any2str(service["StreamingSleeptime"])
+				else:
+					text += '\n\t\t| CameraStreaming: Off'
+				if service["CameraMotionDetection"]:
+					text += '\n\t\t| CameraMotionDetection: On'
+					if service["MotionDetectionRecording"]:
+						text += '\n\t\t\t| MotionDetectionRecording: On'
+						text += '\n\t\t\t\t|| MotionRecordingFormat: ' + any2str(service["MotionRecordingFormat"])
+						text += '\n\t\t\t\t|| MotionRecordingLocation: ' + any2str(service["MotionRecordingLocation"])
+						text += '\n\t\t\t\t|| MotionRecordingThreshold: ' + any2str(service["MotionRecordingThreshold"])
+					else:
+						text += '\n\t\t\t| MotionDetectionRecording: Off'
+					text += '\n\t\t\t| MotionDetectionContour: ' + ('On' if service["MotionDetectionContour"] else 'Off')
+				else:
+					text += '\n\t\t| CameraMotionDetection: Off'
+				text += '\n\t\t|| CameraResolution: ' + ('None' if service["CameraResolution"] is None else any2str(service["CameraResolution"]))
+				text += '\n\t\t|| CameraFramerate: ' + any2str(service["CameraFramerate"])
+				text += '\n\t\t|| CameraSleeptime: ' + any2str(service["CameraSleeptime"])
+		else:
+			return ""
 
 
 # Class: CmdData
@@ -1135,7 +1182,7 @@ class StateData:
 # Function: usage
 def usage():
 	print "\n" + __project__ + " " + __module__ + " " + __version__ + ", " + __license__ + ", " + __copyright__ + """
-Usage: picam -c "start server" [-f ./picam.cfg] -i "0.0.0.0" -p 9079
+Usage: picam -c "init server" [-f ./picam.cfg] -i "0.0.0.0" -p 9079
 
 Options:
  -v, --verbose    run in verbosity mode
@@ -1146,13 +1193,13 @@ Options:
  --help           this help text
 
 Examples:
-> picam -c "start server"
-> picam --command="start server"
+> picam -c "init server"
+> picam --command="init server"
   = run server (using default hostname and port) using input options
-> picam start server
+> picam init server
   = run server (using default hostname and port) aggregating command from all input parameters
-> picam -c "start server" -i "0.0.0.0" -p 6400
-> picam --command="start server" --interface="127.0.0.1" --port=6400
+> picam -c "init server" -i "0.0.0.0" -p 6400
+> picam --command="init server" --interface="127.0.0.1" --port=6400
   = run server (using default hostname and port) using input options
 > picam -c "start service on #1"
 > picam --command="start service on c1"
@@ -1162,7 +1209,7 @@ Examples:
 > picam -c "set property CameraResolution=1280,720 on c1" -h "192.168.0.100" -p 6400
 > picam --command="set property CameraResolution=1280,720 on c1" --host="127.0.0.1" --port=6400
   = run client that will send the command described by a specific option to a dedicated server
-> picam "start server and start service on #0 and enable property CameraStreaming on #0 and enable property MotionDetectionRecording on #0"
+> picam "init server and start service on #0 and enable property CameraStreaming on #0 and enable property MotionDetectionRecording on #0"
   = this is a composed command (by 'and' operator) which can start the server, camera #0 and others. This kind of composed command could be run directly when you start the server or you can executed from client
 > picam -f /opt/clue/etc/picam.cfg
   = run picam application using a configuration file (a file with commands), able to start the server or to run specific client actions
