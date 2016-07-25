@@ -4,7 +4,7 @@ __project__ = "Clue"
 __module__ = "PiCam"
 __author__ = "SDA"
 __email__ = "damian.stefan@gmail.com"
-__copyright__ = "Copyright (C) 2015-2016, AMSD"
+__copyright__ = "Copyright (c) 2015-2016, AMSD"
 __license__ = "GPL"
 __version__ = "1.2.3"
 __verbose__ = False
@@ -557,55 +557,67 @@ class PiCamServerHandler(BaseRequestHandler):
 			self.log("Receiving client request: " + str(command))
 			# Instantiate client structure to detect the action and subject
 			data = StateData(command)
-			# Evaluate parsed action (client request)
-			if data.action == 'echo' and (data.subject is None or data.subject == 'server'):
-				answer = self.server.runActionEcho()
-			elif data.action == 'status' and (data.subject is None or data.subject == 'server'):
-				answer = self.server.runActionStatus()
-			elif data.action == 'shutdown' and data.subject == 'server':
-				answer = None
-				if self.server.getCameras():
-					keys = self.server.getCameras().keys()
-					for key in keys:
-						subanswer = self.server.runActionStopCamera(key)
-						time.sleep(1)
-						if answer is None:
-							jsonanswer = json.load(subanswer)
-							jsonanswer["action"] = "shutdown"
-						else:
-							jsonmsg = json.load(subanswer)
-							jsonanswer["achieved"] = jsonanswer["achieved"] & jsonmsg["achieved"]
-							jsonanswer["message"] += ". " + jsonmsg["message"]
-					answer = '{"action":"shutdown", "achieved":' + str(jsonanswer["achieved"]) + ', "message": "' + jsonanswer["message"] + '"}'
+			# Evaluate server actions
+			if data is not None and data.subject == 'server':
+				if data.action == 'echo':
+					answer = self.server.runActionEcho()
+				elif data.action == 'status':
+					answer = self.server.runActionStatus()
+				elif data.action == 'shutdown':
+					answer = None
+					if self.server.getCameras():
+						keys = self.server.getCameras().keys()
+						for key in keys:
+							subanswer = self.server.runActionStopCamera(key)
+							if answer is None:
+								jsonanswer = json.loads(subanswer)
+								jsonanswer["action"] = "shutdown"
+							else:
+								jsonmsg = json.loads(subanswer)
+								jsonanswer["achieved"] = jsonanswer["achieved"] & jsonmsg["achieved"]
+								jsonanswer["message"] += ". " + jsonmsg["message"]
+							time.sleep(1)
+						answer = '{"action":"shutdown", "achieved":' + str(jsonanswer["achieved"]).lower() + ', "message":"' + jsonanswer["message"] + '"}'
+					else:
+						answer = '{"action":"shutdown", "achieved":true, "message":"No camera is running"}'
 				else:
-					answer = '{"action":"shutdown", "achieved":True, "message":"No camera running"}'
-			elif data.action == 'start' and data.subject == 'service':
-				answer = self.server.runActionStartCamera(data.target)
-			elif data.action == 'stop' and data.subject == 'service':
-				answer = self.server.runActionStopCamera(data.target)
-			elif (data.action == 'set' or data.action == 'enable' or data.action == 'disable') and data.subject == 'property':
+					raise RuntimeError("Invalid server action: " + any2str(data.action))
+			# Evaluate service actions
+			elif data is not None and data.subject == 'service':
+				if data.action == 'start':
+					answer = self.server.runActionStartCamera(data.target)
+				elif data.action == 'stop' and data.subject == 'service':
+					answer = self.server.runActionStopCamera(data.target)
+				else:
+					raise RuntimeError("Invalid service action: " + any2str(data.action))
+			# Evaluate property actions
+			elif data is not None and data.subject == 'property':
 				if data.action == "enable":
-					data.property += " = True"
+					camprop = data.property.strip()
+					camdata = "True"
 				elif data.action == "disable":
-					data.property += " = False"
-				camprop = data.property.split('=')[0].strip()
-				camdata = data.property.split('=')[1].strip()
+					camprop = data.property.strip()
+					camdata = "False"
+				elif data.action == "set":
+					camprop = data.property.split('=')[0].strip()
+					camdata = data.property.split('=')[1].strip()
+				else:
+					raise RuntimeError("Invalid property action: " + any2str(data.action))
 				answer = self.server.runActionSetProperty(data.target, camprop, camdata)
 			else:
-				answer = '{"action":"unknown", "achieved":False, "message":"Command ' + data.action + ' is not implemented or is unknown"}'
+				answer = '{"action":"unknown", "achieved":false, "message":"Command ' + str(data) + ' is not implemented or is unknown"}'
 		except BaseException as stderr:
 			data = None
-			answer = '{"action":"unknown", "achieved":False, "message":"' + tomsg(["Error processing client request:", stderr])[1] + '"}'
+			answer = '{"action":"unknown", "achieved":false, "message":"' + tomsg(["Error processing client request:", stderr])[1] + '"}'
 		# Send server answer to the client (in JSON format)
 		try:
-			# Sending answer to client
-			self.request.sendall(answer + "\n")
-			# Ending communication
-			self.request.sendall("END")
 			# If the command is shutdown stop all server threads and deallocate server object
-			if data is not None and data.action == 'stop' and data.subject == 'server':
+			if data is not None and data.action == 'shutdown' and data.subject == 'server':
 				self.server.shutdown()
 				self.server = None
+			else:
+				# Sending answer to client
+				self.request.sendall(answer)
 		except BaseException as stderr:
 			self.log(["Handling server command failed:", stderr])
 
@@ -645,13 +657,13 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 
 	# Method: runActionEcho
 	def runActionEcho(self):
-		data = '{"action":"echo", "achieved":True, "result":{"project":"' + __project__ + '", "module":"' + __module__ + '"'
+		data = '{"action":"echo", "achieved":true, "result":{"project":"' + __project__ + '", "module":"' + __module__ + '"'
 		data += ', "version":"' + __version__ + '", "license":"' + __license__ + '", "copyright":"' + __copyright__ + '"}}'
 		return data
 
 	# Method: runActionStatus
 	def runActionStatus(self):
-		data = '{"action":"status", "achieved":True, "result":'
+		data = '{"action":"status", "achieved":true, "result":'
 		data += '{"project":"' + __project__ + '", "module":"' + __module__ + '", "version":"' + __version__ + '"'
 		data += ', "server":"' + str(self.server_address[0]) + '", "port":' + str(self.server_address[1]) + ', "services":'
 		if self.getCameras():
@@ -681,7 +693,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 				index += 1
 			data += ']'
 		else:
-			data += 'none'
+			data += '[]'
 		data += '}}'
 		return data
 
@@ -708,9 +720,9 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 		else:
 			key = None
 			msg = "Camera identifier was not specified"
-		data = '{"action":"start", "achieved":' + str(achieved) + ', "message":"' + msg + '"'
+		data = '{"action":"start", "achieved":' + str(achieved).lower() + ', "message":"' + msg + '"'
 		if key is not None:
-			data += ', "result":{"service":"' + key + '"}}'
+			data += ', "result":{"service":" camera ' + key + '"}}'
 		else:
 			data += '}'
 		return data
@@ -737,7 +749,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 		else:
 			key = None
 			msg = "Camera could not be identified to stop service"
-		data = '{"action":"stop", "achieved":' + str(achieved) + ', "message":"' + msg + '"'
+		data = '{"action":"stop", "achieved":' + str(achieved).lower() + ', "message":"' + msg + '"'
 		if key is not None:
 			data += ', "result":{"service":"' + key + '"}}'
 		else:
@@ -815,7 +827,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 			key = None
 			achieved = False
 			msg = "Camera could not be identified to set property"
-		data = '{"action":"property", "achieved":' + str(achieved) + ', "message":"' + msg + '"'
+		data = '{"action":"property", "achieved":' + str(achieved).lower() + ', "message":"' + msg + '"'
 		if key is not None:
 			data += ', "result":{"service":"' + key + '", "property":"' + camprop + '", "value":"' + camdata + '"}}'
 		else:
@@ -903,10 +915,6 @@ class PiCamClient:
 		self._api = api
 		self._apiData = []
 
-	# Method: getServerAddress
-	def getServerAddress(self):
-		return self._host + ":" + str(self._port)
-
 	# Method: connect
 	def run(self, command):
 		# Declare server thread in case of the command will start it
@@ -920,7 +928,7 @@ class PiCamClient:
 				self.log(errordata)
 				sys.exit(1)
 			else:
-				self._apiData.append('{"action":"unknown", "achieved":False, "message":' + tomsg(errordata)[1])
+				self._apiData.append('{"action":"unknown", "achieved":false, "message":' + tomsg(errordata)[1])
 				return self._apiData
 		# Check if input command ask to start server instance
 		if data.action == "init" and data.subject == "server":
@@ -929,11 +937,11 @@ class PiCamClient:
 			serverhread.daemon = True
 			serverhread.start()
 			# Write output to std output or write it through API chain
-			infodata = __module__ + " Server has been initialized"
+			infodata = __project__ + " " + __module__ + " Server has been initialized"
 			if not self._api:
 				self.log(infodata)
 			else:
-				self._apiData.append('{"action":"init", "achieved":True, "message":' + tomsg(infodata)[1])
+				self._apiData.append('{"action":"init", "achieved":true, "message":' + tomsg(infodata)[1])
 			# Check if the current command is linked by other to execute the whole chain
 			if data.hasLinkedData():
 				data = data.getLinkedData()
@@ -943,7 +951,7 @@ class PiCamClient:
 		while data is not None:
 			try:
 				# Send command to server instance
-				self.log(__module__ + " Client is calling " + self.getServerAddress())
+				self.log(__project__ + " " + __module__ + " Client is calling " + self._host + ":" + str(self._port))
 				client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 				client.connect((self._host, self._port))
 				# Generate command received from standard input
@@ -953,13 +961,16 @@ class PiCamClient:
 				# Getting the answers from server
 				while True:
 					answer = client.recv(1024)
-					if answer is not None and answer != '' and answer != "END":
+					if answer is not None and answer != '':
 						if not self._api:
 							# Get JSON structure
-							jsonanswer = json.load(answer)
+							jsonanswer = json.loads(answer)
 							# Read message type and value to be displayed to STD output
 							if jsonanswer is not None:
-								message = jsonanswer["message"]
+								if jsonanswer.get("message") is not None:
+									message = jsonanswer["message"]
+								else:
+									message = None
 								if jsonanswer["achieved"]:
 									level = "INFO"
 								else:
@@ -970,7 +981,7 @@ class PiCamClient:
 							# Display message to standard output
 							if jsonanswer["action"] == "echo":
 								self.log(self.echo(jsonanswer), type="INFO", server=True)
-							elif jsonanswer["action"] == "echo":
+							elif jsonanswer["action"] == "status":
 								self.log(self.status(jsonanswer), type="INFO", server=True)
 							elif message is not None:
 								self.log(message, type=level, server=True)
@@ -984,7 +995,7 @@ class PiCamClient:
 				if not self._api:
 					self.log(errordata)
 				else:
-					self._apiData.append('{"action":"' + data.action + '", "achieved":False, "message":' + tomsg(errordata)[1])
+					self._apiData.append('{"action":"' + data.action + '", "achieved":false, "message":' + tomsg(errordata)[1])
 			finally:
 				# Check if the current command is linked by other command
 				if data.hasLinkedData():
@@ -1010,7 +1021,7 @@ class PiCamClient:
 						self.log("Failed running silent shutdown", type="ERROR", server=True)
 		# End program execution
 		if not self._api:
-			print "End execution of PiCam.\n"
+			print ""
 		else:
 			return self._apiData
 
@@ -1035,7 +1046,7 @@ class PiCamClient:
 	def status(self, answer):
 		if answer is not None and answer["result"] is not None:
 			text = "Status of " + answer["result"]["project"] + " " + answer["result"]["module"] + " " + answer["result"]["version"]
-			text += '\n\t> server: ' + answer["result"]["server"] + ":" + answer["result"]["port"]
+			text += '\n\t> server: ' + answer["result"]["server"] + ":" + any2str(answer["result"]["port"])
 			for service in answer["result"]["services"]:
 				text += '\n\t> service: #' + service["CameraId"]
 				if service["CameraStreaming"]:
@@ -1059,6 +1070,7 @@ class PiCamClient:
 				text += '\n\t\t|| CameraResolution: ' + ('None' if service["CameraResolution"] is None else any2str(service["CameraResolution"]))
 				text += '\n\t\t|| CameraFramerate: ' + any2str(service["CameraFramerate"])
 				text += '\n\t\t|| CameraSleeptime: ' + any2str(service["CameraSleeptime"])
+			return text
 		else:
 			return ""
 
@@ -1090,12 +1102,16 @@ class StateData:
 		else:
 			raise RuntimeError("Invalid or null client command")
 		# Validate obtained data structure
-		if (self.action == "start" or self.action == "stop" or self.action == "status") and not (self.subject == "server" or self.subject == "service"):
-			raise RuntimeError("Invalid subject of start/stop/status action: " + any2str(self.subject))
+		if (self.action == "init" or self.action == "shutdown" or self.action == "status" or self.action == "echo") and not self.subject == "server":
+			raise RuntimeError("Invalid subject of init/shutdown/status/echo action: " + any2str(self.subject))
+		elif (self.action == "start" or self.action == "stop") and not self.subject == "service":
+			raise RuntimeError("Invalid subject of start/stop action: " + any2str(self.subject))
 		elif (self.action == "set" or self.action == "enable" or self.action == "disable") and self.subject != "property":
 			raise RuntimeError("Invalid action for property action: " + any2str(self.action))
 		elif self.subject == 'server' and self.target is not None:
 			raise RuntimeError("Invalid subject for the specified target: " + any2str(self.subject))
+		elif (self.subject == 'service' or self.subject == 'property') and self.target is None:
+			raise RuntimeError("Unknown target for the specified subject: " + any2str(self.subject))
 		elif self.action is None or self.action == '':
 			raise RuntimeError("Action can not be null")
 		elif self.subject is None or self.subject == '':
@@ -1191,6 +1207,7 @@ Options:
  -p, --port       host port number for client connectivity
  -f, --file       file with command to start server instance or to run client commands
  --help           this help text
+ --version        version of picam client
 
 Examples:
 > picam -c "init server"
@@ -1284,7 +1301,7 @@ if __name__ == "__main__":
 	host = None
 	port = None
 	# Parse input parameters
-	opts, args = getopt.getopt(sys.argv[1:], "c:f:h:i:p:v", ["command=", "file=", "host=", "interface=", "port=", "verbose", "help"])
+	opts, args = getopt.getopt(sys.argv[1:], "c:f:h:i:p:v", ["command=", "file=", "host=", "interface=", "port=", "verbose", "help", "version"])
 	# Collect input parameters
 	for opt, arg in opts:
 		if opt in ("-c", "--command"):
@@ -1299,6 +1316,9 @@ if __name__ == "__main__":
 			__verbose__ = True
 		elif opt == '--help':
 			usage()
+			sys.exit(0)
+		elif opt == '--version':
+			print __project__ + " " + __module__ + " " + __version__ + "\n" + __copyright__ + "\n"
 			sys.exit(0)
 	# Validate command: if command was not specified through input options collect all input parameters and aggregate them in one single command
 	if (command is None or command == '') and file is None and host is None and port is None:
