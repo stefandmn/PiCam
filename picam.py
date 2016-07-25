@@ -551,36 +551,39 @@ class PiCamServerHandler(BaseRequestHandler):
 		# Get client connection
 		self.log("Connection from: " + str(self.client_address))
 		# Receive data from client and process it
-		answer = None
 		command = self.request.recv(1024).strip()
 		# Process client requests
 		try:
+			self.log("Receiving client request: " + str(command))
 			# Instantiate client structure to detect the action and subject
-			self.log("Receiving command: " + str(command))
 			data = StateData(command)
-		except BaseException as stderr:
-			data = None
-			answer = '{"action":"unknown", "achieved":false, "message":"' + tomsg(["Error parsing client request:", stderr])[1] + '"}'
-		if data is not None:
-			# Action and subject evaluation
+			# Evaluate parsed action (client request)
 			if data.action == 'echo' and (data.subject is None or data.subject == 'server'):
 				answer = self.server.runActionEcho()
-			if data.action == 'status' and (data.subject is None or data.subject == 'server'):
+			elif data.action == 'status' and (data.subject is None or data.subject == 'server'):
 				answer = self.server.runActionStatus()
-			if data.action == 'stop' and data.subject == 'server':
-				if self.getCameras():
-					keys = self.getCameras().keys()
+			elif data.action == 'stop' and data.subject == 'server':
+				answer = None
+				if self.server.getCameras():
+					keys = self.server.getCameras().keys()
 					for key in keys:
-						try:
-							self.runActionStopCamera(key)
-							time.sleep(1)
-						except BaseException as baserr:
-							msg = tomsg(["Stopping service on camera", key, "failed:", baserr])
-			if data.action == 'start' and data.subject == 'service':
+						subanswer = self.server.runActionStopCamera(key)
+						time.sleep(1)
+						if answer is None:
+							jsonanswer = json.load(subanswer)
+							jsonanswer["action"] = "shutdown"
+						else:
+							jsonmsg = json.load(subanswer)
+							jsonanswer["achieved"] = jsonanswer["achieved"] & jsonmsg["achieved"]
+							jsonanswer["message"] += "\n" + jsonmsg["message"]
+					answer = '{"action":"shutdown", "achieved":' + str(jsonanswer["achieved"]) + ', "message": "' + jsonanswer["message"] + '"}'
+				else:
+					answer = '{"action":"shutdown", "achieved":True, "message":"No camera running"}'
+			elif data.action == 'start' and data.subject == 'service':
 				answer = self.server.runActionStartCamera(data.target)
-			if data.action == 'stop' and data.subject == 'service':
+			elif data.action == 'stop' and data.subject == 'service':
 				answer = self.server.runActionStopCamera(data.target)
-			if (data.action == 'set' or data.action == 'enable' or data.action == 'disable') and data.subject == 'property':
+			elif (data.action == 'set' or data.action == 'enable' or data.action == 'disable') and data.subject == 'property':
 				if data.action == "enable":
 					data.property += " = True"
 				elif data.action == "disable":
@@ -589,11 +592,14 @@ class PiCamServerHandler(BaseRequestHandler):
 				camdata = data.property.split('=')[1].strip()
 				answer = self.server.runActionSetProperty(data.target, camprop, camdata)
 			else:
-				answer = '{"action":"unknown", "achieved":false, "message":"Command ' + data.action + ' is not implemented or is unknown"}'
+				answer = '{"action":"unknown", "achieved":False, "message":"Command ' + data.action + ' is not implemented or is unknown"}'
+		except BaseException as stderr:
+			data = None
+			answer = '{"action":"unknown", "achieved":False, "message":"' + tomsg(["Error parsing client request:", stderr])[1] + '"}'
+
 		try:
 			# Sending answer to client
-			if answer is not None:
-				self.request.sendall(answer)
+			self.request.sendall(answer)
 			# Ending communication
 			self.request.sendall("END")
 			#
@@ -604,157 +610,11 @@ class PiCamServerHandler(BaseRequestHandler):
 			self.log(["Handling server command failed:", stderr])
 
 	# Method: log
-	def log(self, data, toClient=False):
+	def log(self, data):
 		type, message = tomsg(data)
+		# Send message to the standard output or to the client console
 		if message != '':
-			# Send message to the standard output or to the client console
-			if toClient:
-				if type is not None and type != '':
-					self.request.sendall(type + "@" + message)
-				else:
-					self.request.sendall(message)
-			else:
-				print "%s | %s Server > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), type, message)
-
-	# Method: runStartService
-	def runStartService(self, key):
-		if key is not None:
-			if key in self._server.getCameras():
-				self.log("Camera " + key + " is already started", toClient=True)
-			else:
-				camera = Camera(key)
-				camera.setStreamingPort(self._server.server_address[1] + 1 + camera.getId())
-				camera.start()
-				self._server.getCameras()[key] = camera
-				self.log("Camera " + key + " has been started", toClient=True)
-		else:
-			self.log("Camera identifier was not specified", toClient=True)
-
-	# Method: runStopService
-	def runStopService(self, key):
-		if key is not None:
-			if key in self._server.getCameras():
-				camera = self._server.getCameras()[key]
-				camera.stop()
-				del self._server.getCameras()[key]
-				self.log("Camera " + key + " has been stopped", toClient=True)
-			else:
-				self.log("Camera " + key + " was not yet started", toClient=True)
-		else:
-			self.log("Camera could not be identified to stop service", toClient=True)
-
-	# Method: runStopServer
-	def runStopServer(self):
-		self.log("Server shutting down")
-		# Stop camera's threads
-		if self._server.getCameras():
-			keys = self._server.getCameras().keys()
-			for key in keys:
-				try:
-					self.runStopService(key)
-					time.sleep(1)
-				except BaseException as baserr:
-					self.log(["Stopping service on camera", key, "failed:", baserr])
-		# Stop server thread
-		self._server.shutdown()
-		self._server.server_close()
-
-	# Method: runEchoServer
-	def runEchoServer(self):
-		self.log(__project__ + " " + __module__ + " " + __version__ + ", " + __license__ + ", " + __copyright__, toClient=True)
-
-	# Method: runStatusServer
-	def runStatusServer(self):
-		text = "Status of " + __project__ + " " + __module__ + " " + __version__
-		text += '\n\t> server: ' + str(self._server.server_address[0]) + ':' + str(self._server.server_address[1])
-		if self._server.getCameras():
-			keys = self._server.getCameras().keys()
-			for key in keys:
-				camera = self._server.getCameras()[key]
-				text += '\n\t> service: #' + str(camera.getId())
-				if camera.isStreamingEnabled():
-					text += '\n\t\t| CameraStreaming: ON'
-					text += '\n\t\t\t|| StreamingPort: ' + any2str(camera.getStreamingPort())
-					text += '\n\t\t\t|| StreamingSleeptime: ' + any2str(camera.getStreamingSleep())
-				else:
-					text += '\n\t\t| CameraStreaming: OFF'
-				if camera.isMotionDetectionEnabled():
-					text += '\n\t\t| CameraMotionDetection: ON'
-					if camera.getMotionDetectionRecording():
-						text += '\n\t\t\t| MotionDetectionRecording: ON'
-						text += '\n\t\t\t\t|| MotionRecordingFormat: ' + any2str(camera.getMotionRecordingFormat())
-						text += '\n\t\t\t\t|| MotionRecordingLocation: ' + any2str(camera.getMotionRecordingLocation())
-						text += '\n\t\t\t\t|| MotionRecordingThreshold: ' + any2str(camera.getMotionRecordingThreshold())
-					else:
-						text += '\n\t\t\t| MotionDetectionRecording: OFF'
-					text += '\n\t\t\t| MotionDetectionContour: ' + ('ON' if camera.getMotionDetectionContour() else 'OFF')
-				else:
-					text += '\n\t\t| CameraMotionDetection: OFF'
-				text += '\n\t\t|| CameraResolution: ' + ('None' if camera.getCameraResolution() is None else str(camera.getCameraResolution()[0]) + 'x' + str(camera.getCameraResolution()[1]))
-				text += '\n\t\t|| CameraFramerate: ' + any2str(camera.getCameraFramerate())
-				text += '\n\t\t|| CameraSleeptime: ' + any2str(camera.getCameraSleeptime())
-		self.log(text, toClient=True)
-
-	# Method: runSetProperty
-	def runSetProperty(self, data):
-		# Translate enable and disable actions
-		if data.action == data.getActions()[3]:
-			data.property += " = True"
-		if data.action == data.getActions()[4]:
-			data.property += " = False"
-		# Ge target camera
-		if data.target in self._server.getCameras():
-			# Identity target camera
-			camera = self._server.getCameras()[data.target]
-			# Identify property name and property value
-			camprop = data.property.split('=')[0].strip()
-			camdata = data.property.split('=')[1].strip()
-			# Evaluate CameraStreaming property
-			if camprop.lower() == data.getProperties()[0].lower():
-				if str2bool(camdata):
-					camera.setStreamingOn()
-				else:
-					camera.setStreamingOff()
-			# Evaluate CameraMotionDetection property
-			elif camprop.lower() == data.getProperties()[1].lower():
-				if str2bool(camdata):
-					camera.setMotionOn()
-				else:
-					camera.setMotionOff()
-			# Evaluate CameraResolution property
-			elif camprop.lower() == data.getProperties()[2].lower():
-				camera.setCameraResolution(str(camdata))
-			# Evaluate CameraFramerate property
-			elif camprop.lower() == data.getProperties()[3].lower():
-				camera.setCameraFramerate(int(camdata))
-			# Evaluate CameraSleeptime property
-			elif camprop.lower() == data.getProperties()[4].lower():
-				camera.setCameraSleeptime(float(camdata))
-			# Evaluate MotionDetectionContour property
-			elif camprop.lower() == data.getProperties()[5].lower():
-				camera.setMotionDetectionContour(str2bool(camdata))
-			# Evaluate MotionDetectionRecording property
-			elif camprop.lower() == data.getProperties()[6].lower():
-				camera.setMotionDetectionRecording(str2bool(camdata))
-			# Evaluate MotionRecordingFormat property
-			elif camprop.lower() == data.getProperties()[7].lower():
-				camera.setMotionRecordingFormat(str(camdata))
-			# Evaluate MotionRecordingThreshold property
-			elif camprop.lower() == data.getProperties()[8].lower():
-				camera.setMotionRecordingThreshold(int(camdata))
-			# Evaluate MotionRecordingLocation property
-			elif camprop.lower() == data.getProperties()[9].lower():
-				camera.setMotionRecordingLocation(str(camdata))
-			# Evaluate StreamingPort property
-			elif camprop.lower() == data.getProperties()[10].lower():
-				camera.setStreamingPort(int(camdata))
-			# Evaluate StreamingSleeptime property
-			elif camprop.lower() == data.getProperties()[11].lower():
-				camera.setStreamingSleep(float(camdata))
-			# Answer to client
-			self.log("Property '" + data.property + "' has been applied on camera " + data.target, toClient=True)
-		else:
-			self.log("Camera " + data.target + " is not yet started", toClient=True)
+			print "%s | %s Server > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), type, message)
 
 
 # Class: PiCamServer
@@ -785,13 +645,13 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 
 	# Method: runActionEcho
 	def runActionEcho(self):
-		data = '{"action":"echo", "achieved":true, "result":{"project":"' + __project__ + '", "module":"' + __module__ + '"'
+		data = '{"action":"echo", "achieved":True, "result":{"project":"' + __project__ + '", "module":"' + __module__ + '"'
 		data += ', "version":"' + __version__ + '", "license":"' + __license__ + '", "copyright":"' + __copyright__ + '"}}'
 		return data
 
 	# Method: runActionStatus
 	def runActionStatus(self):
-		data = '{"action":"status", "achieved":true, "result":'
+		data = '{"action":"status", "achieved":True, "result":'
 		data += '{"project":"' + __project__ + '", "module":"' + __module__ + '", "version":"' + __version__ + '"'
 		data += ', "server":"' + str(self.server_address[0]) + '", "port":' + str(self.server_address[1]) + ', "services":'
 		if self.getCameras():
