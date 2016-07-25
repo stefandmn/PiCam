@@ -9,7 +9,7 @@ The application has been tested on **Raspberry Pi 2** over **Jessie** distributi
 In order to run the application you have to be sure that your environment has all necessary libraries and software packages. Just try to execute the following commands: `sudo apt-get update && sudo apt-get install python-pip python-opencv python-picamera ipython python-scipy python-numpy python-pygame python-setuptools`
 
 The application has been designed to work in client-server mode in order to control and to command the cameras remotely. The application accepts three option to customize the execution or you can specify directly the command, aggregating all input parameters into a specific command:
-`> python picam.py start server` or `> python picam.py "start server"`
+`> python picam.py init server` or `> python picam.py "init server"`
 This command will start the server and will keep the prompt until a client command will be received to stop teh server or until the `Ctrl ^C` keyboard signal will be received.
 
 As soon as the server is started in a separate terminal you can run the client module with a specific command: for example you can start the USB camera as follow:
@@ -30,8 +30,10 @@ The commands accepted by PiCam client and server components have been defined ar
    - **service** = camera service (when a camera becomes active means a service identified by camera #id has been started), 
    - **property** = camera or related services property (see the list of implemented properties, documented below)
  - **action** - the implemented actions are: 
-   - **start** = start server instance or a service (camera), 
-   - **stop** = stop server instance or a service (camera), 
+   - **init** = start server instance, 
+   - **shutdown** = stop server instance, 
+   - **start** = start camera service, 
+   - **stop** = stop camera service, 
    - **set** = set a camera property, 
    - **enable** = activate a camera property (or a camera service), 
    - **disable** = de-activate a camera property (or a camera service), 
@@ -66,7 +68,7 @@ If you want to start to use this application you have to perform the following s
 1. Download `picam.py` file and store it somewhere on the file system
 2. (Optional) Add _execute_ permission to this file: `chmox +x pycam.py`
 3. Install prerequisites: `sudo apt-get update && sudo apt-get install python-pip python-opencv python-picamera ipython python-scipy python-numpy python-pygame python-setuptools` 
-4. Open a shell console and execute the following command to start the server and also one of the cameras (including streaming service): `pycam.py "start server and start service on #1 or enable property CameraStreaming on #1"`. In case you have attached a Pi camera replace `#1` with `#0`
+4. Open a shell console and execute the following command to start the server and also one of the cameras (including streaming service): `pycam.py "init server and start service on #1 or enable property CameraStreaming on #1"`. In case you have attached a Pi camera replace `#1` with `#0`
 5. Open a browser and check `http://RPiHostname:9081` for USB camera or `http://RPiHostname:9080` for Pi camera
 6. (Optional) If you want to start the second USB camera you have to execute the following command: `pycam.py "start service on #2 or enable property CameraStreaming on #2"`
 7. (Optional) If you want to run motion detection for the first camera you need to open another shell console and to execute the following command: `pycam.py "enable property MotionDetectionRecording on #1"`. **Attention!** it will store image samples in `/tmp` folder. _Please notice that **MotionDetectionRecording** activates also **CameraMotionDetection** property._ 

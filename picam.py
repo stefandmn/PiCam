@@ -6,7 +6,7 @@ __author__ = "SDA"
 __email__ = "damian.stefan@gmail.com"
 __copyright__ = "Copyright (C) 2015-2016, AMSD"
 __license__ = "GPL"
-__version__ = "1.2.2"
+__version__ = "1.2.3"
 __verbose__ = False
 
 import os
@@ -562,7 +562,7 @@ class PiCamServerHandler(BaseRequestHandler):
 				answer = self.server.runActionEcho()
 			elif data.action == 'status' and (data.subject is None or data.subject == 'server'):
 				answer = self.server.runActionStatus()
-			elif data.action == 'stop' and data.subject == 'server':
+			elif data.action == 'shutdown' and data.subject == 'server':
 				answer = None
 				if self.server.getCameras():
 					keys = self.server.getCameras().keys()
@@ -575,7 +575,7 @@ class PiCamServerHandler(BaseRequestHandler):
 						else:
 							jsonmsg = json.load(subanswer)
 							jsonanswer["achieved"] = jsonanswer["achieved"] & jsonmsg["achieved"]
-							jsonanswer["message"] += "\n" + jsonmsg["message"]
+							jsonanswer["message"] += ". " + jsonmsg["message"]
 					answer = '{"action":"shutdown", "achieved":' + str(jsonanswer["achieved"]) + ', "message": "' + jsonanswer["message"] + '"}'
 				else:
 					answer = '{"action":"shutdown", "achieved":True, "message":"No camera running"}'
@@ -595,14 +595,14 @@ class PiCamServerHandler(BaseRequestHandler):
 				answer = '{"action":"unknown", "achieved":False, "message":"Command ' + data.action + ' is not implemented or is unknown"}'
 		except BaseException as stderr:
 			data = None
-			answer = '{"action":"unknown", "achieved":False, "message":"' + tomsg(["Error parsing client request:", stderr])[1] + '"}'
-
+			answer = '{"action":"unknown", "achieved":False, "message":"' + tomsg(["Error processing client request:", stderr])[1] + '"}'
+		# Send server answer to the client (in JSON format)
 		try:
 			# Sending answer to client
-			self.request.sendall(answer)
+			self.request.sendall(answer + "\n")
 			# Ending communication
 			self.request.sendall("END")
-			#
+			# If the command is shutdown stop all server threads and deallocate server object
 			if data is not None and data.action == 'stop' and data.subject == 'server':
 				self.server.shutdown()
 				self.server = None
@@ -900,10 +900,8 @@ class PiCamClient:
 		# Validate port
 		if self._port is None or not isinstance(self._port, int) or self._port <= 0:
 			self._port = 9079
-		self._onlog = True
 		self._api = api
-		self._apiOutMsg = []
-		self._apiOutRes = True
+		self._apiData = []
 
 	# Method: getServerAddress
 	def getServerAddress(self):
@@ -911,9 +909,6 @@ class PiCamClient:
 
 	# Method: connect
 	def run(self, command):
-		# Initialize output
-		self._apiOutMsg = []
-		self._apiOutRes = True
 		# Declare server thread in case of the command will start it
 		server = None
 		# Instantiate Data module and parse (validate) input command
@@ -925,19 +920,23 @@ class PiCamClient:
 				self.log(errordata)
 				sys.exit(1)
 			else:
-				self._logapi(errordata)
-				return self._apiOutRes
+				self._apiData.append('{"action":"unknown", "achieved":False, "message":' + tomsg(errordata)[1])
+				return self._apiData
 		# Check if input command ask to start server instance
-		if data.action == "start" and data.subject == "server":
+		if data.action == "init" and data.subject == "server":
 			server = PiCamServer((self._host, self._port), PiCamServerHandler)
 			serverhread = threading.Thread(target=server.serve_forever)
 			serverhread.daemon = True
 			serverhread.start()
-			self.log(__module__ + " Server has been started")
+			# Write output to std output or write it through API chain
+			infodata = __module__ + " Server has been initialized"
+			if not self._api:
+				self.log(infodata)
+			else:
+				self._apiData.append('{"action":"init", "achieved":True, "message":' + tomsg(infodata)[1])
 			# Check if the current command is linked by other to execute the whole chain
 			if data.hasLinkedData():
 				data = data.getLinkedData()
-				self._onlog = False
 			else:
 				data = None
 		# Check if input comment ask to execute a server command
@@ -954,20 +953,20 @@ class PiCamClient:
 				# Getting the answers from server
 				while True:
 					answer = client.recv(1024)
-					# Evaluate answer
-					if answer != "END" and answer != '':
-						if answer.startswith("INFO@") or answer.startswith("ERROR@"):
-							level = answer.split('@', 1)[0]
-							message = answer.split('@', 1)[1]
-						else:
-							level = None
-							message = answer
-						# Display message to standard output
-						if message is not None and message != "":
-							if not self._api:
-								self.log(message, type=level, server=True)
+					if answer is not None and answer != '' and answer != "END":
+						jsonanswer = json.load(answer)
+						# Evaluate answer
+						if jsonanswer is not None:
+							message = jsonanswer["message"]
+							if jsonanswer["achieved"]:
+								level = "INFO"
 							else:
-								self._logapi(message, type=level)
+								level = "ERROR"
+						else:
+							message = "Server message could not be translated: " + str(answer)
+							level = "ERROR"
+						# Display message to standard output
+						self.log(message, type=level, server=True)
 					else:
 						break
 				client.close()
@@ -976,7 +975,7 @@ class PiCamClient:
 				if not self._api:
 					self.log(errordata)
 				else:
-					self._logapi(errordata)
+					self._apiData.append('{"action":"' + data.action + '", "achieved":False, "message":' + tomsg(errordata)[1])
 			finally:
 				# Check if the current command is linked by other command
 				if data.hasLinkedData():
@@ -985,13 +984,12 @@ class PiCamClient:
 					data = None
 		# If server has been instantiated in this process wait to finish his execution
 		if server is not None and not self._api:
-			self._onlog = True
 			while server.isRunning():
 				try:
 					time.sleep(1)
 				except KeyboardInterrupt:
 					print
-					self.log('Interrupting server execution by user control')
+					self.log('Interrupting server execution by user control', type="INFO", server=True)
 					# Unlock server socket
 					try:
 						_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1000,20 +998,12 @@ class PiCamClient:
 						_socket.close()
 					except:
 						# Nothing to do here
-						self.log("Failed running silent shutdown")
+						self.log("Failed running silent shutdown", type="ERROR", server=True)
 		# End program execution
 		if not self._api:
 			print "End execution of PiCam.\n"
 		else:
-			return self._apiOutRes
-
-	# Method: getApiResult
-	def getApiResult(self):
-		return self._apiOutRes
-
-	# Method: getApiMessages
-	def getApiMessages(self):
-		return self._apiOutMsg
+			return self._apiData
 
 	# Method: log
 	def log(self, data, type=None, server=False):
@@ -1023,22 +1013,12 @@ class PiCamClient:
 			if not server:
 				print "%s | %s Client > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), type, message)
 			else:
-				if self._onlog:
-					print "%s | %s Server > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), type, message)
-
-	# Method: _logapi
-	def _logapi(self, data, type=None):
-		if self._api and self._onlog:
-			type, message = tomsg(data, type)
-			# Evaluate message and type
-			if message != '':
-				self._apiOutMsg.append(message)
-				if type is not None and type == "ERROR": self._apiOutRes |= False
+				print "%s | %s Server > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), type, message)
 
 
 # Class: CmdData
 class StateData:
-	_actions = ['start', 'stop', 'set', 'enable', 'disable', 'status', 'echo']
+	_actions = ['init', 'shutdown', 'start', 'stop', 'set', 'enable', 'disable', 'status', 'echo']
 	_subjects = ['server', 'service', 'property']
 	_properties = ['CameraStreaming', 'CameraMotionDetection', 'CameraResolution', 'CameraFramerate', 'CameraSleeptime',
 				   'MotionDetectionContour', 'MotionDetectionRecording', 'MotionRecordingFormat', 'MotionRecordingThreshold', 'MotionRecordingLocation',
