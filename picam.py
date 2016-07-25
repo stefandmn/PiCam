@@ -560,9 +560,9 @@ class PiCamServerHandler(BaseRequestHandler):
 			# Evaluate server actions
 			if data is not None and data.subject == 'server':
 				if data.action == 'echo':
-					answer = self.server.runActionEcho()
+					answer = self.server.runActionServerEcho()
 				elif data.action == 'status':
-					answer = self.server.runActionStatus()
+					answer = self.server.runActionServerStatus()
 				elif data.action == 'shutdown':
 					answer = None
 					if self.server.getCameras():
@@ -656,13 +656,13 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 		self.server_close()
 
 	# Method: runActionEcho
-	def runActionEcho(self):
+	def runActionServerEcho(self):
 		data = '{"action":"echo", "achieved":true, "result":{"project":"' + __project__ + '", "module":"' + __module__ + '"'
 		data += ', "version":"' + __version__ + '", "license":"' + __license__ + '", "copyright":"' + __copyright__ + '"}}'
 		return data
 
 	# Method: runActionStatus
-	def runActionStatus(self):
+	def runActionServerStatus(self):
 		data = '{"action":"status", "achieved":true, "result":'
 		data += '{"project":"' + __project__ + '", "module":"' + __module__ + '", "version":"' + __version__ + '"'
 		data += ', "server":"' + str(self.server_address[0]) + '", "port":' + str(self.server_address[1]) + ', "services":'
@@ -684,11 +684,12 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 				data += ', "StreamingPort":' + any2str(camera.getStreamingPort())
 				data += ', "StreamingSleeptime":' + any2str(camera.getStreamingSleep())
 				data += ', "CameraMotionDetection":' + ('true' if camera.isMotionDetectionEnabled() else 'false')
-				data += ', "MotionDetectionContour":' + ('true' if camera.getMotionDetectionContour() else 'false')
-				data += ', "MotionDetectionRecording":' + ('true' if camera.getMotionDetectionRecording() else 'false')
-				data += ', "MotionRecordingFormat":"' + any2str(camera.getMotionRecordingFormat()) + '"'
-				data += ', "MotionRecordingLocation":"' + any2str(camera.getMotionRecordingLocation()) + '"'
-				data += ', "MotionRecordingThreshold":' + any2str(camera.getMotionRecordingThreshold())
+				if camera.isMotionDetectionEnabled():
+					data += ', "MotionDetectionContour":' + ('true' if camera.getMotionDetectionContour() else 'false')
+					data += ', "MotionDetectionRecording":' + ('true' if camera.getMotionDetectionRecording() else 'false')
+					data += ', "MotionRecordingFormat":"' + any2str(camera.getMotionRecordingFormat()) + '"'
+					data += ', "MotionRecordingLocation":"' + any2str(camera.getMotionRecordingLocation()) + '"'
+					data += ', "MotionRecordingThreshold":' + any2str(camera.getMotionRecordingThreshold())
 				data += '}'
 				index += 1
 			data += ']'
@@ -1038,7 +1039,7 @@ class PiCamClient:
 	# Method: echo
 	def echo(self, answer):
 		if answer is not None and answer["result"] is not None:
-			return answer["result"]["project"] + " " + answer["result"]["module"] + " " + answer["result"]["version"] + ", " + answer["result"]["license"] + ", " + answer["result"]["copyright"]
+			return answer["result"]["project"] + " " + answer["result"]["module"] + " " + answer["result"]["version"] + ", " + answer["result"]["copyright"]
 		else:
 			return ""
 
@@ -1048,7 +1049,7 @@ class PiCamClient:
 			text = "Status of " + answer["result"]["project"] + " " + answer["result"]["module"] + " " + answer["result"]["version"]
 			text += '\n\t> server: ' + answer["result"]["server"] + ":" + any2str(answer["result"]["port"])
 			for service in answer["result"]["services"]:
-				text += '\n\t> service: #' + service["CameraId"]
+				text += '\n\t> service: #' + any2str(service["CameraId"])
 				if service["CameraStreaming"]:
 					text += '\n\t\t| CameraStreaming: On'
 					text += '\n\t\t\t|| StreamingPort: ' + any2str(service["StreamingPort"])
@@ -1245,9 +1246,12 @@ def str2bool(v):
 # Function: str2bool
 def any2str(v):
 	if v is not None:
-		return str(v)
+		if isinstance(v, bool):
+			return str(v).lower()
+		else:
+			return str(v)
 	else:
-		return 'None'
+		return 'null'
 
 # Function: cmdfile
 def cmdfile(file, command=''):
