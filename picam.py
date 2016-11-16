@@ -933,20 +933,26 @@ class PiCamClient:
 				return self._apiData
 		# Check if input command ask to start server instance
 		if data.action == "init" and data.subject == "server":
-			server = PiCamServer((self._host, self._port), PiCamServerHandler)
-			serverhread = threading.Thread(target=server.serve_forever)
-			serverhread.daemon = True
-			serverhread.start()
-			# Write output to std output or write it through API chain
-			infodata = __project__ + " " + __module__ + " Server has been initialized"
-			if not self._api:
-				self.log(infodata)
-			else:
-				self._apiData.append('{"action":"init", "achieved":true, "message":' + tomsg(infodata)[1])
-			# Check if the current command is linked by other to execute the whole chain
-			if data.hasLinkedData():
-				data = data.getLinkedData()
-			else:
+			try:
+				server = PiCamServer((self._host, self._port), PiCamServerHandler)
+				serverhread = threading.Thread(target=server.serve_forever)
+				serverhread.daemon = True
+				serverhread.start()
+				# Write output to std output or write it through API chain
+				infodata = __project__ + " " + __module__ + " Server has been initialized"
+				if not self._api:
+					self.log(infodata)
+				else:
+					self._apiData.append('{"action":"init", "achieved":true, "message":' + tomsg(infodata)[1])
+				# Check if the current command is linked by other to execute the whole chain
+				if data.hasLinkedData():
+					data = data.getLinkedData()
+				else:
+					data = None
+			except BaseException as baserr:
+				errordata = ["PiCam server failed:", baserr]
+				self.log(errordata)
+				server = None
 				data = None
 		# Check if input comment ask to execute a server command
 		while data is not None:
@@ -1304,26 +1310,29 @@ if __name__ == "__main__":
 	file = None
 	host = None
 	port = None
-	# Parse input parameters
-	opts, args = getopt.getopt(sys.argv[1:], "c:f:h:i:p:v", ["command=", "file=", "host=", "interface=", "port=", "verbose", "help", "version"])
-	# Collect input parameters
-	for opt, arg in opts:
-		if opt in ("-c", "--command"):
-			command = arg
-		elif opt in ("-f", "--file"):
-			file = arg
-		elif opt in ("-h", "--host", "-i", "--interface"):
-			host = arg
-		elif opt in ("-p", "--port"):
-			port = arg
-		elif opt in ("-v", "--verbose"):
-			__verbose__ = True
-		elif opt == '--help':
-			usage()
-			sys.exit(0)
-		elif opt == '--version':
-			print __project__ + " " + __module__ + " " + __version__ + "\n" + __copyright__ + "\n"
-			sys.exit(0)
+	try:
+		# Parse input parameters
+		opts, args = getopt.getopt(sys.argv[1:], "c:f:h:i:p:v", ["command=", "file=", "host=", "interface=", "port=", "verbose", "help", "version"])
+		# Collect input parameters
+		for opt, arg in opts:
+			if opt in ("-c", "--command"):
+				command = arg
+			elif opt in ("-f", "--file"):
+				file = arg
+			elif opt in ("-h", "--host", "-i", "--interface"):
+				host = arg
+			elif opt in ("-p", "--port"):
+				port = arg
+			elif opt in ("-v", "--verbose"):
+				__verbose__ = True
+			elif opt == '--help':
+				usage()
+				sys.exit(0)
+			elif opt == '--version':
+				print __project__ + " " + __module__ + " " + __version__ + "\n" + __copyright__ + "\n"
+				sys.exit(0)
+	except BaseException as baserr:
+		command = None
 	# Validate command: if command was not specified through input options collect all input parameters and aggregate them in one single command
 	if (command is None or command == '') and file is None and host is None and port is None:
 		command = ' '.join(sys.argv[1:])
