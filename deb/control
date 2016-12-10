@@ -1,0 +1,9 @@
+Origin: AMSD
+Package: clue-picam
+Version: 1.0.3
+Priority: optional
+Section: main
+Installed-Size: 0000
+Architecture: armhf
+Maintainer: damian.stefan@gmail.com
+Description: Surveillance implementation for Raspberry Pi over for USB and Pi cameras that provides motion detection and HTTP streaming

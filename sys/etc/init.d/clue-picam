@@ -1,0 +1,46 @@
+#!/bin/sh
+
+### BEGIN INIT INFO
+# Provides:          picam
+# Required-Start:    $all
+# Required-Stop:     $all
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Starts instance of Clue PiCam
+### END INIT INFO
+
+############### EDIT ME ##################
+
+NAME=picam
+DESC="Clue PiCam"
+
+############### END EDIT ME ##################
+
+. /lib/lsb/init-functions
+
+case "$1" in
+	start)
+		log_daemon_msg "Starting $DESC" "$NAME"
+		if [ -f /opt/clue/etc/picam.cfg ]; then
+			/opt/clue/bin/picam -f /opt/clue/etc/picam.cfg &
+		else
+			/opt/clue/bin/picam init server
+		fi
+		log_end_msg $?
+		;;
+	stop)
+		log_daemon_msg "Stopping $DESC" "$NAME"
+		/opt/clue/bin/picam shutdown server
+		log_end_msg $?
+		;;
+	restart)
+		$0 stop && sleep 2 && $0 start
+		;;
+	status)
+		/opt/clue/bin/picam status server
+		;;
+	*)
+		echo "Usage: $0 {start|stop|status|restart}"
+		exit 1
+		;;
+esac

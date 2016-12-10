@@ -1,0 +1,21 @@
+#!/bin/bash
+
+if [ $1 == "configure" ]; then
+	# Append specific values in PYTHONPATH
+	if [ ! -f /etc/profile.d/02-cluepypath.sh ]; then
+		echo "PYTHONPATH=/opt/clue/lib/python2.7/dist-packages:\$PYTHONPATH" >/etc/profile.d/02-cluepypath.sh
+		echo "export PYTHONPATH" >>/etc/profile.d/02-cluepypath.sh
+		chmod +x /etc/profile.d/02-cluepypath.sh
+		. /etc/profile.d/02-cluepypath.sh
+	fi
+
+	# Set script permissions and Register service
+	chmod +x /etc/init.d/clue-picam
+	chmod +x /opt/clue/bin/picam
+	update-rc.d clue-picam defaults
+
+	# Restart the servicee (if is the case)
+	if [ $(ps -ef | grep "picam" | grep -v "grep" | wc -l) -ne 0 ]; then
+		service clue-picam restart
+	fi
+fi

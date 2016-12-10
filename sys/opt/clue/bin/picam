@@ -1,0 +1,10 @@
+#!/bin/bash
+###############################################################################
+# Clue PiCAM - Surveillance application for Clue OS
+###############################################################################
+# Environment variables
+CMD=/usr/bin/python
+SRC=/opt/clue/lib/python2.7/dist-packages/picam/picam.py
+
+# Run command
+${CMD} ${SRC} "$@"
