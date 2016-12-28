@@ -1,13 +1,12 @@
 #!/usr/bin/python
 
-__project__ = "Clue"
-__module__ = "PiCam"
-__author__ = "SDA"
-__email__ = "damian.stefan@gmail.com"
-__copyright__ = "Copyright (c) 2015-2016, AMSD"
-__license__ = "GPL"
-__version__ = "1.2.3"
-__verbose__ = False
+__project__   = "Clue"
+__module__    = "PiCam"
+__email__     = "damian.stefan@gmail.com"
+__copyright__ = "Copyright (c) 2015-2017, AMSD"
+__license__   = "GPL-2"
+__version__   = "1.0"
+__verbose__   = False
 
 import os
 import io
@@ -221,7 +220,12 @@ class Camera(threading.Thread):
 				# Wait 1 second for the usecase when the resolution is set in the same time with the camera start
 				time.sleep(1)
 				# Set value
-				self._resolution = (int(resolution.split(',')[0].strip()), int(resolution.split(',')[1].strip()))
+				if resolution.find(",", 0):
+					self._resolution = (int(resolution.split(',')[0].strip()), int(resolution.split(',')[1].strip()))
+				elif resolution.lower().find("x", 0):
+					self._resolution = (int(resolution.lower().split('x')[0].strip()), int(resolution.lower().split('x')[1].strip()))
+				else:
+					raise RuntimeError("Undefined camera resolution value: " + str(resolution))
 				# Configure camera
 				if isinstance(self._camera, PiCamera):
 					self._camera.resolution = self._resolution
@@ -665,7 +669,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 	def runActionServerStatus(self):
 		data = '{"action":"status", "achieved":true, "result":'
 		data += '{"project":"' + __project__ + '", "module":"' + __module__ + '", "version":"' + __version__ + '"'
-		data += ', "server":"' + str(self.server_address[0]) + '", "port":' + str(self.server_address[1]) + ', "services":'
+		data += ', "host":"' + str(self.server_address[0]) + '", "port":' + str(self.server_address[1]) + ', "services":'
 		if self.getCameras():
 			data += '['
 			index = 0
@@ -676,20 +680,21 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 					data += '{'
 				else:
 					data += ', {'
-				data += '"CameraId":' + str(camera.getId())
-				data += ', "CameraResolution":"' + ('default' if camera.getCameraResolution() is None else str(camera.getCameraResolution()[0]) + 'x' + str(camera.getCameraResolution()[1])) + '"'
+				data += '"CameraId":' + any2str(camera.getId())
+				data += '"CameraStatus": "On"'
+				data += ', "CameraResolution": "' + ('default' if camera.getCameraResolution() is None else str(camera.getCameraResolution()[0]) + 'x' + str(camera.getCameraResolution()[1])) + '"'
 				data += ', "CameraFramerate": ' + any2str(camera.getCameraFramerate())
 				data += ', "CameraSleeptime": ' + any2str(camera.getCameraSleeptime())
-				data += ', "CameraStreaming":' + ('true' if camera.isStreamingEnabled() else "false")
-				data += ', "StreamingPort":' + any2str(camera.getStreamingPort())
-				data += ', "StreamingSleeptime":' + any2str(camera.getStreamingSleep())
-				data += ', "CameraMotionDetection":' + ('true' if camera.isMotionDetectionEnabled() else 'false')
+				data += ', "CameraStreaming": "' + ('On' if camera.isStreamingEnabled() else 'Off') + '"'
+				data += ', "StreamingPort": ' + any2str(camera.getStreamingPort())
+				data += ', "StreamingSleeptime": ' + any2str(camera.getStreamingSleep())
+				data += ', "CameraMotionDetection": "' + ('On' if camera.isMotionDetectionEnabled() else 'Off') + '"'
 				if camera.isMotionDetectionEnabled():
-					data += ', "MotionDetectionContour":' + ('true' if camera.getMotionDetectionContour() else 'false')
-					data += ', "MotionDetectionRecording":' + ('true' if camera.getMotionDetectionRecording() else 'false')
-					data += ', "MotionRecordingFormat":"' + any2str(camera.getMotionRecordingFormat()) + '"'
-					data += ', "MotionRecordingLocation":"' + any2str(camera.getMotionRecordingLocation()) + '"'
-					data += ', "MotionRecordingThreshold":' + any2str(camera.getMotionRecordingThreshold())
+					data += ', "MotionDetectionContour": "' + ('On' if camera.getMotionDetectionContour() else 'Off') + '"'
+					data += ', "MotionDetectionRecording": "' + ('On' if camera.getMotionDetectionRecording() else 'Off') + '"'
+					data += ', "MotionRecordingFormat": "' + any2str(camera.getMotionRecordingFormat()) + '"'
+					data += ', "MotionRecordingLocation": "' + any2str(camera.getMotionRecordingLocation()) + '"'
+					data += ', "MotionRecordingThreshold": ' + any2str(camera.getMotionRecordingThreshold())
 				data += '}'
 				index += 1
 			data += ']'
@@ -773,13 +778,13 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 					camera = self.getCameras()[key]
 					# Evaluate CameraStreaming property
 					if camprop.lower() == 'CameraStreaming'.lower():
-						if str2bool(camdata):
+						if any2bool(camdata):
 							camera.setStreamingOn()
 						else:
 							camera.setStreamingOff()
 					# Evaluate CameraMotionDetection property
 					elif camprop.lower() == 'CameraMotionDetection'.lower():
-						if str2bool(camdata):
+						if any2bool(camdata):
 							camera.setMotionOn()
 						else:
 							camera.setMotionOff()
@@ -794,10 +799,10 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 						camera.setCameraSleeptime(float(camdata))
 					# Evaluate MotionDetectionContour property
 					elif camprop.lower() == 'MotionDetectionContour'.lower():
-						camera.setMotionDetectionContour(str2bool(camdata))
+						camera.setMotionDetectionContour(any2bool(camdata))
 					# Evaluate MotionDetectionRecording property
 					elif camprop.lower() == 'MotionDetectionRecording'.lower():
-						camera.setMotionDetectionRecording(str2bool(camdata))
+						camera.setMotionDetectionRecording(any2bool(camdata))
 					# Evaluate MotionRecordingFormat property
 					elif camprop.lower() == 'MotionRecordingFormat'.lower():
 						camera.setMotionRecordingFormat(str(camdata))
@@ -1050,10 +1055,10 @@ class PiCamClient:
 			return ""
 
 	# Method: status
-	def status(self, answer):
+	def status(self, answer, type="text"):
 		if answer is not None and answer["result"] is not None:
 			text = "Status of " + answer["result"]["project"] + " " + answer["result"]["module"] + " " + answer["result"]["version"]
-			text += '\n\t> server: ' + answer["result"]["server"] + ":" + any2str(answer["result"]["port"])
+			text += '\n\t> server: ' + answer["result"]["host"] + ":" + any2str(answer["result"]["port"])
 			for service in answer["result"]["services"]:
 				text += '\n\t> service: #' + any2str(service["CameraId"])
 				if service["CameraStreaming"]:
@@ -1080,6 +1085,91 @@ class PiCamClient:
 			return text
 		else:
 			return ""
+
+	# Method: command
+	def command(self, filename, command=''):
+		if filename is not None and os.path.isfile(filename):
+			try:
+				# Read the file content
+				file = open(filename, 'r')
+				content = file.readlines()
+				file.close()
+				# Check if content if JSON, otherwise  parse and run it
+				if '\n'.join(content).strip().startswith('{') and '\n'.join(content).strip().endswith('}'):
+					data = json.loads('\n'.join(content).strip())
+					content = []
+					if data.get("host") and data["host"] != "default":
+						self._host = data["host"]
+					if data.get("port") and data["port"] != "default":
+						self._port = data["port"]
+					if data.get('server') and (data['server'] == "init" or data['server'] == "shutdown"):
+						content.append("server " + data['server'])
+					# Handle services
+					if data.get("services"):
+						for service in data['services']:
+							# Validate camera id
+							if service.get("CameraId") is None:
+								continue
+							# Get camera identifier
+							oncam = " on #" + any2str(service["CameraId"])
+							# Check camera status
+							if service.get("CameraStatus") and any2bool(service["CameraStatus"]):
+								content.append("start service" + oncam)
+							elif service.get("CameraStatus") and not any2bool(service["CameraStatus"]):
+								if data.get('server') is None or (data.get('server') and data['server'] != "init"):
+									content.append("stop service" + oncam)
+								continue
+							# Check camera resolution
+							if service.get("CameraResolution") and service["CameraResolution"] != "default":
+								content.append("set property CameraResolution=" + service["CameraResolution"] + oncam)
+							# Check camera framerate
+							if service.get("CameraFramerate") and service["CameraFramerate"] != "default":
+								content.append("set property CameraFramerate=" + service["CameraFramerate"] + oncam)
+							# Check camera sleeptime
+							if service.get("CameraSleeptime") and service["CameraSleeptime"] != "default":
+								content.append("set property CameraSleeptime=" + service["CameraSleeptime"] + oncam)
+							# Check camera streaming
+							if not service.get("CameraStreaming") or (service.get("CameraStreaming") and service["CameraStreaming"] == "default") or (service.get("CameraStreaming") and any2bool(service["CameraStreaming"])):
+								if service.get("CameraStreaming") and any2bool(service["CameraStreaming"]):
+									content.append("enable property CameraStreaming" + oncam)
+								if service.get("StreamingPort") and service["StreamingPort"] != "default":
+									content.append("set property StreamingPort=" + service["StreamingPort"] + oncam)
+								if service.get("StreamingSleeptime") and service["StreamingSleeptime"] != "default":
+									content.append("set property StreamingSleeptime=" + service["StreamingSleeptime"] + oncam)
+							elif service.get("CameraStreaming") and not any2bool(service["CameraStreaming"]):
+								content.append("disable property CameraStreaming" + oncam)
+							# Check camera motion detection
+							if not service.get("CameraMotionDetection") or (service.get("CameraMotionDetection") and service["CameraMotionDetection"] == "default") or (service.get("CameraMotionDetection") and any2bool(service["CameraMotionDetection"])):
+								if service.get("CameraMotionDetection") and any2bool(service["CameraMotionDetection"]):
+									content.append("enable property CameraMotionDetection" + oncam)
+								if service.get("MotionDetectionContour") and service["MotionDetectionContour"] != "default" and any2bool(service["MotionDetectionContour"]):
+									content.append("enable property MotionDetectionContour" + oncam)
+								elif service.get("MotionDetectionContour") and service["MotionDetectionContour"] != "default" and not any2bool(service["MotionDetectionContour"]):
+									content.append("disable property MotionDetectionContour" + oncam)
+								# Check motion detection recording option
+								if not service.get("MotionDetectionRecording") or (service.get("MotionDetectionRecording") and service["MotionDetectionRecording"] != "default") or (service.get("MotionDetectionRecording") and any2bool(service["MotionDetectionRecording"])):
+									if service.get("MotionDetectionRecording") and any2bool(service["MotionDetectionRecording"]):
+										content.append("enable property MotionDetectionRecording" + oncam)
+									if service.get("MotionRecordingFormat") and service["MotionRecordingFormat"] != "default":
+										content.append("set property MotionRecordingFormat=" + service["MotionRecordingFormat"] + oncam)
+									if service.get("MotionRecordingThreshold") and service["MotionRecordingThreshold"] != "default":
+										content.append("set property MotionRecordingThreshold=" + str(service["MotionRecordingThreshold"]) + oncam)
+									if service.get("MotionRecordingLocation") and service["MotionRecordingLocation"] != "default":
+										content.append("set property MotionRecordingLocation=" + service["MotionRecordingLocation"] + oncam)
+								elif service.get("MotionDetectionRecording") and not any2bool(service["MotionDetectionRecording"]):
+									content.append("disable property MotionDetectionRecording" + oncam)
+							elif service.get("CameraMotionDetection") and not any2bool(service["CameraMotionDetection"]):
+								content.append("disable property CameraMotionDetection" + oncam)
+				# Build composed command
+				for cmdline in content:
+					if cmdline.strip() != '' and not cmdline.strip().startswith('#'):
+						if command is not None:
+							command += ' and ' + cmdline.strip()
+						else:
+							command = cmdline.strip()
+			except BaseException as baserr:
+				self.log(["Error transforming configuration into command:", baserr], type="ERROR", server=False)
+		return command
 
 
 # Class: CmdData
@@ -1153,7 +1243,10 @@ class StateData:
 				self._parse(data)
 			elif data[0].strip() in self._targetarticles:
 				del data[0]
-				self.target = '#' + filter(str.isdigit, data[0].strip())
+				if isinstance(data[0].strip(), unicode):
+					self.target = '#' + filter(unicode.isdigit, data[0].strip())
+				else:
+					self.target = '#' + filter(str.isdigit, data[0].strip())
 				del data[0]
 				self._parse(data)
 			else:
@@ -1209,6 +1302,7 @@ Usage: picam -c "init server" [-f ./picam.cfg] -i "0.0.0.0" -p 9079
 
 Options:
  -v, --verbose    run in verbosity mode
+ -c, --command    describe the command that should be executed by server component
  -i, --interface  host interface to start server component
  -h, --host       host name/ip of the server for client connectivity
  -p, --port       host port number for client connectivity
@@ -1233,21 +1327,21 @@ Examples:
 > picam -c "set property CameraResolution=1280,720 on c1" -h "192.168.0.100" -p 6400
 > picam --command="set property CameraResolution=1280,720 on c1" --host="127.0.0.1" --port=6400
   = run client that will send the command described by a specific option to a dedicated server
-> picam "init server and start service on #0 and enable property CameraStreaming on #0 and enable property MotionDetectionRecording on #0"
-  = this is a composed command (by 'and' operator) which can start the server, camera #0 and others. This kind of composed command could be run directly when you start the server or you can executed from client
-> picam -f /opt/clue/etc/picam.cfg
-  = run picam application using a configuration file (a file with commands), able to start the server or to run specific client actions
 """
 
 
 # Function: str2bool
-def str2bool(v):
-	if v.lower() in ("on", "yes", "true", "t", "1"):
+def any2bool(v):
+	if isinstance(v, bool):
+		return v
+	if isinstance(v, int):
+		return True if v > 0 else False
+	elif v.lower() in ("on", "yes", "true", "t", "1", "enable", "enabled", "active", "start", "started"):
 		return True
-	elif v.lower() in ("off", "no", "false", "f", "0"):
+	elif v.lower() in ("off", "no", "false", "f", "0", "disable", "disabled", "inactive", "stop", "stopped"):
 		return False
 	else:
-		return None
+		return False
 
 # Function: str2bool
 def any2str(v):
@@ -1258,21 +1352,6 @@ def any2str(v):
 			return str(v)
 	else:
 		return 'null'
-
-# Function: cmdfile
-def cmdfile(file, command=''):
-	if file is not None and os.path.isfile(file):
-		cfgfile = open(file, 'r')
-		cfglines = cfgfile.readlines()
-		cfgfile.close()
-		for cmdline in cfglines:
-			if cmdline.strip() != '' and not cmdline.strip().startswith('#'):
-				if command is not None:
-					command += ' and ' + cmdline.strip()
-				else:
-					command = cmdline.strip()
-	return command
-
 
 # Function: log
 def tomsg(data, level=None):
@@ -1339,11 +1418,12 @@ if __name__ == "__main__":
 		if command.strip() == 'help':
 			usage()
 			sys.exit(0)
-	# Check if a configuration file has been specified read it ang get all commands defined in
-	if file is not None and os.path.isfile(file):
-		command = cmdfile(file, command)
-	# Instantiate Client module an run the command
+	# Instantiate Client module an then run the command
 	client = PiCamClient(host, port)
+	# Check if a configuration file has been specified, read it ang get all commands defined in
+	if file is not None and os.path.isfile(file):
+		command = client.command(file, command)
+	# Run identified command
 	client.run(command)
 	# Client normal exist
 	sys.exit(0)

@@ -1,0 +1,37 @@
+{
+	"server": "init",
+	"services": [
+		{
+			"CameraId": 0,
+			"CameraStatus": "Off",
+			"CameraStreaming": "On",
+			"CameraResolution": "640x480",
+			"CameraFramerate": "default",
+			"CameraSleeptime": "default",
+			"CameraMotionDetection": "Off",
+			"MotionDetectionContour": "On",
+			"MotionDetectionRecording": "Off",
+			"MotionRecordingFormat": "image",
+			"MotionRecordingThreshold": 1500,
+			"MotionRecordingLocation": "/tmp",
+			"StreamingPort": "default",
+			"StreamingSleeptime": "default"
+		},
+		{
+			"CameraId": 1,
+			"CameraStatus": "On",
+			"CameraStreaming": "On",
+			"CameraResolution": "640x480",
+			"CameraFramerate": "default",
+			"CameraSleeptime": "default",
+			"CameraMotionDetection": "Off",
+			"MotionDetectionContour": "On",
+			"MotionDetectionRecording": "Off",
+			"MotionRecordingFormat": "image",
+			"MotionRecordingThreshold": 1500,
+			"MotionRecordingLocation": "/tmp",
+			"StreamingPort": "default",
+			"StreamingSleeptime": "default"
+		}
+	]
+}
