@@ -220,9 +220,9 @@ class Camera(threading.Thread):
 				# Wait 1 second for the usecase when the resolution is set in the same time with the camera start
 				time.sleep(1)
 				# Set value
-				if resolution.find(",", 0):
+				if resolution.find(",") > 0:
 					self._resolution = (int(resolution.split(',')[0].strip()), int(resolution.split(',')[1].strip()))
-				elif resolution.lower().find("x", 0):
+				elif resolution.lower().find("x") > 0:
 					self._resolution = (int(resolution.lower().split('x')[0].strip()), int(resolution.lower().split('x')[1].strip()))
 				else:
 					raise RuntimeError("Undefined camera resolution value: " + str(resolution))
@@ -297,12 +297,12 @@ class Camera(threading.Thread):
 			self.setMotionOn()
 			self._motion.setFormat(format)
 
-	# Method: setMotionRecordingThreshold
-	def setMotionRecordingThreshold(self, threshold):
+	# Method: setMotionDetectionThreshold
+	def setMotionDetectionThreshold(self, threshold):
 		if self.isMotionDetectionEnabled():
 			self._motion.setThreshold(threshold)
 		else:
-			self.log("Motion detection function will be activated to set recording threshold")
+			self.log("Motion detection function will be activated to set motion threshold")
 			self.setMotionOn()
 			self._motion.setThreshold(threshold)
 
@@ -380,8 +380,8 @@ class Camera(threading.Thread):
 	def getMotionRecordingLocation(self):
 		return self._motion.getLocation()
 
-	# Method: getMotionRecordingThreshold
-	def getMotionRecordingThreshold(self):
+	# Method: getMotionDetectionThreshold
+	def getMotionDetectionThreshold(self):
 		return self._motion.getThreshold()
 
 	# Method: getMotionDetectionContour
@@ -404,8 +404,8 @@ class Motion:
 		# Motion detection parametrization
 		self._format = 'image'
 		self._contour = True
-		self._recording = True
-		self._threshold = 1000
+		self._recording = False
+		self._threshold = 1500
 		self._location = '/tmp'
 
 	# Method: isContour
@@ -511,7 +511,7 @@ class Motion:
 			pt2 = ((bound_rect[0] + bound_rect[2]) * xsize, (bound_rect[1] + bound_rect[3]) * ysize)
 			# Add this latest bounding box to the overall area that is being detected as movement
 			area += ((pt2[0] - pt1[0]) * (pt2[1] - pt1[1]))
-			if self.isContour():
+			if self.isContour() and area > self.getThreshold():
 				points.append(pt1)
 				points.append(pt2)
 				cv.Rectangle(frame, pt1, pt2, cv.CV_RGB(255,0,0), 1)
@@ -691,10 +691,10 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 				data += ', "CameraMotionDetection": "' + ('On' if camera.isMotionDetectionEnabled() else 'Off') + '"'
 				if camera.isMotionDetectionEnabled():
 					data += ', "MotionDetectionContour": "' + ('On' if camera.getMotionDetectionContour() else 'Off') + '"'
+					data += ', "MotionDetectionThreshold": ' + any2str(camera.getMotionDetectionThreshold())
 					data += ', "MotionDetectionRecording": "' + ('On' if camera.getMotionDetectionRecording() else 'Off') + '"'
 					data += ', "MotionRecordingFormat": "' + any2str(camera.getMotionRecordingFormat()) + '"'
 					data += ', "MotionRecordingLocation": "' + any2str(camera.getMotionRecordingLocation()) + '"'
-					data += ', "MotionRecordingThreshold": ' + any2str(camera.getMotionRecordingThreshold())
 				data += '}'
 				index += 1
 			data += ']'
@@ -800,15 +800,15 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 					# Evaluate MotionDetectionContour property
 					elif camprop.lower() == 'MotionDetectionContour'.lower():
 						camera.setMotionDetectionContour(any2bool(camdata))
+					# Evaluate MotionDetectionThreshold property
+					elif camprop.lower() == 'MotionDetectionThreshold'.lower():
+						camera.setMotionDetectionThreshold(int(camdata))
 					# Evaluate MotionDetectionRecording property
 					elif camprop.lower() == 'MotionDetectionRecording'.lower():
 						camera.setMotionDetectionRecording(any2bool(camdata))
 					# Evaluate MotionRecordingFormat property
 					elif camprop.lower() == 'MotionRecordingFormat'.lower():
 						camera.setMotionRecordingFormat(str(camdata))
-					# Evaluate MotionRecordingThreshold property
-					elif camprop.lower() == 'MotionRecordingThreshold'.lower():
-						camera.setMotionRecordingThreshold(int(camdata))
 					# Evaluate MotionRecordingLocation property
 					elif camprop.lower() == 'MotionRecordingLocation'.lower():
 						camera.setMotionRecordingLocation(str(camdata))
@@ -1112,9 +1112,11 @@ class PiCamClient:
 								continue
 							# Get camera identifier
 							oncam = " on #" + any2str(service["CameraId"])
+							started = False
 							# Check camera status
 							if service.get("CameraStatus") and any2bool(service["CameraStatus"]):
 								content.append("start service" + oncam)
+								started = True
 							elif service.get("CameraStatus") and not any2bool(service["CameraStatus"]):
 								if data.get('server') is None or (data.get('server') and data['server'] != "init"):
 									content.append("stop service" + oncam)
@@ -1137,7 +1139,8 @@ class PiCamClient:
 								if service.get("StreamingSleeptime") and service["StreamingSleeptime"] != "default":
 									content.append("set property StreamingSleeptime=" + service["StreamingSleeptime"] + oncam)
 							elif service.get("CameraStreaming") and not any2bool(service["CameraStreaming"]):
-								content.append("disable property CameraStreaming" + oncam)
+								if not started:
+									content.append("disable property CameraStreaming" + oncam)
 							# Check camera motion detection
 							if not service.get("CameraMotionDetection") or (service.get("CameraMotionDetection") and service["CameraMotionDetection"] == "default") or (service.get("CameraMotionDetection") and any2bool(service["CameraMotionDetection"])):
 								if service.get("CameraMotionDetection") and any2bool(service["CameraMotionDetection"]):
@@ -1146,20 +1149,22 @@ class PiCamClient:
 									content.append("enable property MotionDetectionContour" + oncam)
 								elif service.get("MotionDetectionContour") and service["MotionDetectionContour"] != "default" and not any2bool(service["MotionDetectionContour"]):
 									content.append("disable property MotionDetectionContour" + oncam)
+								if service.get("MotionDetectionThreshold") and service["MotionDetectionThreshold"] != "default":
+									content.append("set property MotionDetectionThreshold=" + str(service["MotionDetectionThreshold"]) + oncam)
 								# Check motion detection recording option
-								if not service.get("MotionDetectionRecording") or (service.get("MotionDetectionRecording") and service["MotionDetectionRecording"] != "default") or (service.get("MotionDetectionRecording") and any2bool(service["MotionDetectionRecording"])):
+								if not service.get("MotionDetectionRecording") or (service.get("MotionDetectionRecording") and service["MotionDetectionRecording"] == "default") or (service.get("MotionDetectionRecording") and any2bool(service["MotionDetectionRecording"])):
 									if service.get("MotionDetectionRecording") and any2bool(service["MotionDetectionRecording"]):
 										content.append("enable property MotionDetectionRecording" + oncam)
 									if service.get("MotionRecordingFormat") and service["MotionRecordingFormat"] != "default":
 										content.append("set property MotionRecordingFormat=" + service["MotionRecordingFormat"] + oncam)
-									if service.get("MotionRecordingThreshold") and service["MotionRecordingThreshold"] != "default":
-										content.append("set property MotionRecordingThreshold=" + str(service["MotionRecordingThreshold"]) + oncam)
 									if service.get("MotionRecordingLocation") and service["MotionRecordingLocation"] != "default":
 										content.append("set property MotionRecordingLocation=" + service["MotionRecordingLocation"] + oncam)
 								elif service.get("MotionDetectionRecording") and not any2bool(service["MotionDetectionRecording"]):
-									content.append("disable property MotionDetectionRecording" + oncam)
+									if not started:
+										content.append("disable property MotionDetectionRecording" + oncam)
 							elif service.get("CameraMotionDetection") and not any2bool(service["CameraMotionDetection"]):
-								content.append("disable property CameraMotionDetection" + oncam)
+								if not started:
+									content.append("disable property CameraMotionDetection" + oncam)
 				# Build composed command
 				for cmdline in content:
 					if cmdline.strip() != '' and not cmdline.strip().startswith('#'):
@@ -1177,7 +1182,7 @@ class StateData:
 	_actions = ['init', 'shutdown', 'start', 'stop', 'set', 'enable', 'disable', 'status', 'echo']
 	_subjects = ['server', 'service', 'property']
 	_properties = ['CameraStreaming', 'CameraMotionDetection', 'CameraResolution', 'CameraFramerate', 'CameraSleeptime',
-				   'MotionDetectionContour', 'MotionDetectionRecording', 'MotionRecordingFormat', 'MotionRecordingThreshold', 'MotionRecordingLocation',
+				   'MotionDetectionContour', 'MotionDetectionRecording', 'MotionRecordingFormat', 'MotionDetectionThreshold', 'MotionRecordingLocation',
 				   'StreamingPort', 'StreamingSleeptime']
 	_targetarticles = ['@', 'at', 'on', 'in', 'to']
 

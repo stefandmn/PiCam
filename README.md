@@ -46,9 +46,9 @@ The commands accepted by PiCam client and server components have been defined ar
    - **CameraFramerate** = set camera framerate (no default value is used, the camera uses the framerate set by default by manufacturer), 
    - **CameraSleeptime** = sleeping time between two frames (it could be considered a second framerate but provided by the application), 
    - **MotionDetectionContour** = activate/de-activate to draw a contour for detected motion on each camera frame (by default it is active), 
+   - **MotionDetectionThreshold** = set the motion detection threshold for vieweing and recording; any motion 'volume' over this value will be shown marked and/or recorded, 
    - **MotionDetectionRecording** = activate/de-activate recording (in pictures or videos) for detected motion; by default the option is enabled, 
    - **MotionRecordingFormat** = set the recording format for motion detection; the possible values could be `image` or `video` (default value is _image_), 
-   - **MotionRecordingThreshold** = set the motion detection threshold for recording; any motion 'volume' over this value will be recorded, 
    - **MotionRecordingLocation** = set the recording location, 
    - **StreamingPort** = set streaming port, 
    - **StreamingSleeptime** = set streaming sleeping time between displayed frames.
