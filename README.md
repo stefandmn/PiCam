@@ -4,7 +4,7 @@
  
 The application is developed in python and uses OpenCV and PiCamera libraries and all related components.
 
-The application has been tested on **Raspberry Pi 2** over **Jessie** distribution and with Pi and USB cameras (both connected to the RPi device or individually).
+The application has been tested on **Raspberry Pi** **v2** and **v3**, running **Jessie** and **Clue** Linux distributions and using _Pi_ and _USB_ cameras (both connected to the RPi device or individually).
 
 In order to run the application you have to be sure that your environment has all necessary libraries and software packages. Just try to execute the following commands: `sudo apt-get update && sudo apt-get install python-pip python-opencv python-picamera ipython python-scipy python-numpy python-pygame python-setuptools`
 
@@ -39,12 +39,14 @@ The commands accepted by PiCam client and server components have been defined ar
    - **disable** = de-activate a camera property (or a camera service), 
    - **echo** = ask for a server echo, 
    - **status** = ask for server configuration and detail status
+   - **load** = ask server to load a _JSON_ configuration file
+   - **save** = ask server component to save current services configuration into a _JSON_ file
  - **properties** - possible values are: 
    - **CameraStreaming** = activate/de-activate streaming service for a specific camera (by default the camera does not start with active streaming channel), 
-   - **CameraMotionDetection** = activate/de-activate motion detection (by default any activated camera/service will use start motion detection service), 
    - **CameraResolution** = set camera resolution (by default the resolution for any attached camera is 640x480, 
    - **CameraFramerate** = set camera framerate (no default value is used, the camera uses the framerate set by default by manufacturer), 
    - **CameraSleeptime** = sleeping time between two frames (it could be considered a second framerate but provided by the application), 
+   - **CameraMotionDetection** = activate/de-activate motion detection (by default any activated camera/service will use start motion detection service), 
    - **MotionDetectionContour** = activate/de-activate to draw a contour for detected motion on each camera frame (by default it is active), 
    - **MotionDetectionThreshold** = set the motion detection threshold for vieweing and recording; any motion 'volume' over this value will be shown marked and/or recorded, 
    - **MotionDetectionRecording** = activate/de-activate recording (in pictures or videos) for detected motion; by default the option is enabled, 
@@ -63,14 +65,77 @@ In order to execute more commands through one single client call you can concate
 
 For more details please run `picam.py --help`
 
-If you want to start to use this application you have to perform the following steps:
+If you want to start using this application you have to perform the following steps:
 
-1. Download `picam.py` file and store it somewhere on the file system
-2. (Optional) Add _execute_ permission to this file: `chmox +x pycam.py`
-3. Install prerequisites: `sudo apt-get update && sudo apt-get install python-pip python-opencv python-picamera ipython python-scipy python-numpy python-pygame python-setuptools` 
-4. Open a shell console and execute the following command to start the server and also one of the cameras (including streaming service): `pycam.py "init server and start service on #1 or enable property CameraStreaming on #1"`. In case you have attached a Pi camera replace `#1` with `#0`
-5. Open a browser and check `http://RPiHostname:9081` for USB camera or `http://RPiHostname:9080` for Pi camera
-6. (Optional) If you want to start the second USB camera you have to execute the following command: `pycam.py "start service on #2 or enable property CameraStreaming on #2"`
-7. (Optional) If you want to run motion detection for the first camera you need to open another shell console and to execute the following command: `pycam.py "enable property MotionDetectionRecording on #1"`. **Attention!** it will store image samples in `/tmp` folder. _Please notice that **MotionDetectionRecording** activates also **CameraMotionDetection** property._ 
-8. (Optional) If you want to change the default location where the motion detection samples are store execute the following command: `pycam.py "set property MotionRecordingLocation=/mnt/data on #1"`.
-9. (Optional) If you want to see the PiCam server configuration and all activates service just run `pycam.py server status`. This client command will interrogate the server from localhost, if you want to interrogate a remote server just use the command line option described before (`-c` to aggreate the command into one single text and `-h` to specifiy the server hostname)
+1. Install prerequisites: `sudo apt-get update && sudo apt-get install python-pip python-opencv python-picamera ipython python-scipy python-numpy python-pygame python-setuptools` 
+2. Download latest release file (`clue-picam.deb` published on __GitHub__) and install it using __dpkg__ command: `sudo dpkg -i clue-picam.deb`. **Attention!** Debian package will not install prerequisites, do it manually!
+   As an alternative download `picam.py` and `__init__.py` files and store it somewhere on the file system, into a dedicated folder (e.g. `/opt/picam`). Afterwards you need to provide _exec_ permission to both python source files: `cd /opt/picam ; chmod +x pycam.py __init__.py`
+3. Open a shell console and execute the following command to start the server and also one of the cameras (including streaming service): `pycam.py "init server and start service on #1 or enable property CameraStreaming on #1"`. In case you have attached a Pi camera replace `#1` with `#0`. If you installed release file user `/opt/clue/bin/picacm` binary instead direct call of `picam.py`
+4. Open a browser and check `http://RPiHostname:9081` for USB camera or `http://RPiHostname:9080` for Pi camera
+5. (Optional) If you want to start the second USB camera you have to execute the following command: `pycam.py "start service on #2 or enable property CameraStreaming on #2"`
+6. (Optional) If you want to run motion detection for the first camera you need to open another shell console and to execute the following command: `pycam.py "enable property MotionDetectionRecording on #1"`. **Attention!** it will store image samples in `/tmp` folder. _Please notice that **MotionDetectionRecording** activates also **CameraMotionDetection** property._ 
+7. (Optional) If you want to change the default location where the motion detection samples are store execute the following command: `pycam.py "set property MotionRecordingLocation=/mnt/data on #1"`.
+8. (Optional) If you want to see the PiCam server configuration and all activates service just run `pycam.py server status`. This client command will interrogate the server from localhost, if you want to interrogate a remote server just use the command line option described before (`-c` to aggreate the command into one single text and `-h` to specifiy the server hostname)
+
+
+Below are described the common use-cases for **PiCam** usage:
+
+1. Start server component
+```shell
+> picam server init
+> picam init server
+> picam -c "server init"
+> picam --command="server init"
+```
+
+2. Load server configuration
+```shell
+> picam server load from /tmp/startup.json
+> picam -c "server load from /tmp/startup.json"
+```
+
+3. Start first USB camera
+```shell
+> picam start service on c1
+> picam -c "start service on #1"
+```
+
+4. Start Streaming over USB camera
+```shell
+> picam enable property CameraStreaming on cam1
+> picam -c "enable property CameraStreaming on #1"
+```
+
+5. Start Motion Detection over USB camera and activate also the recording function to store movies
+```shell
+> picam enable property CameraMotionDetection on c1 and enable property MotionDetectionRecording on c1 and set property MotionRecordingFormat=video on c1
+> picam -c "enable property CameraMotionDetection on #1 and enable property MotionDetectionRecording on c1 and set property MotionRecordingFormat=video on c1"
+```
+
+6. Stop remotely Streaming property for remote USB camera
+```shell
+> picam disable property CameraStreaming on cam1
+> picam -c "disable property CameraStreaming on #1" -h 192.168.1.100
+```
+
+7. Save server configuration
+```shell
+> picam server save in /tmp/startup.json
+> picam -c "save server in /tmp/startup.json"
+> picam -c "save server in /tmp/startup.json" -h 10.10.10.100
+```
+
+8. Stop server instance
+```shell
+> picam server shutdown
+> picam -c "shutdown server"
+> picam -c "server shutdown"
+> picam -c "shutdown server" -h 10.10.10.100 -p 9079
+```
+
+9. Others: returns (1) server Echo message (including server version, module names, etc.), (2) server status , (3) client version
+```shell
+> picam server echo
+> picam server status
+> picam --version
+```
