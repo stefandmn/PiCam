@@ -564,16 +564,16 @@ class PiCamServerHandler(BaseRequestHandler):
 			# Instantiate client structure to detect the action and subject
 			data = StateData(command)
 			# Evaluate server actions
-			if data is not None and data.subject == 'server':
-				if data.action == 'echo':
+			if data is not None and data.subject == StateData.Subjects[0]:
+				if data.action == StateData.Actions[8]:
 					answer = self.server.runServerEcho()
-				elif data.action == 'status':
+				elif data.action == StateData.Actions[7]:
 					answer = self.server.runServerStatus()
-				elif data.action == 'load':
+				elif data.action == StateData.Actions[9]:
 					answer = self.server.runServerLoad(data.target)
-				elif data.action == 'save':
+				elif data.action == StateData.Actions[10]:
 					answer = self.server.runServerSave(data.target)
-				elif data.action == 'shutdown':
+				elif data.action == StateData.Actions[1]:
 					answer = None
 					if self.server.getCameras():
 						keys = self.server.getCameras().keys()
@@ -581,48 +581,49 @@ class PiCamServerHandler(BaseRequestHandler):
 							subanswer = self.server.runServiceStop(key)
 							if answer is None:
 								jsonanswer = json.loads(subanswer)
-								jsonanswer["action"] = "shutdown"
+								jsonanswer["action"] = StateData.Actions[1]
+								jsonanswer["subject"] = StateData.Subjects[0]
 							else:
 								jsonmsg = json.loads(subanswer)
 								jsonanswer["achieved"] = jsonanswer["achieved"] & jsonmsg["achieved"]
 								jsonanswer["message"] += ". " + jsonmsg["message"]
 							time.sleep(1)
-						answer = '{"action":"shutdown", "achieved":' + str(jsonanswer["achieved"]).lower() + ', "message":"' + jsonanswer["message"] + '"}'
+						answer = '{"action":"' + StateData.Actions[1] + '", "subject":"' + StateData.Subjects[0] + '", "achieved":' + str(jsonanswer["achieved"]).lower() + ', "message":"' + jsonanswer["message"] + '"}'
 					else:
-						answer = '{"action":"shutdown", "achieved":true, "message":"No camera is running"}'
+						answer = '{"action":"' + StateData.Actions[1] + '", "subject":"' + StateData.Subjects[0]+ '", "achieved":true, "message":"No camera is running"}'
 				else:
 					raise RuntimeError("Invalid server action: " + any2str(data.action))
 			# Evaluate service actions
-			elif data is not None and data.subject == 'service':
-				if data.action == 'start':
+			elif data is not None and data.subject == StateData.Subjects[1]:
+				if data.action == StateData.Actions[2]:
 					answer = self.server.runServiceStart(data.target)
-				elif data.action == 'stop' and data.subject == 'service':
+				elif data.action == StateData.Actions[3] and data.subject == StateData.Subjects[1]:
 					answer = self.server.runServiceStop(data.target)
 				else:
 					raise RuntimeError("Invalid service action: " + any2str(data.action))
 			# Evaluate property actions
-			elif data is not None and data.subject == 'property':
-				if data.action == "enable":
+			elif data is not None and data.subject == StateData.Subjects[2]:
+				if data.action == StateData.Actions[5]:
 					camprop = data.property.strip()
 					camdata = "True"
-				elif data.action == "disable":
+				elif data.action == StateData.Actions[6]:
 					camprop = data.property.strip()
 					camdata = "False"
-				elif data.action == "set":
+				elif data.action == StateData.Actions[4]:
 					camprop = data.property.split('=')[0].strip()
 					camdata = data.property.split('=')[1].strip()
 				else:
 					raise RuntimeError("Invalid property action: " + any2str(data.action))
 				answer = self.server.runPropertySet(data.target, camprop, camdata)
 			else:
-				answer = '{"action":"unknown", "achieved":false, "message":"Command ' + str(data) + ' is not implemented or is unknown"}'
+				answer = '{"action":"unknown", "subject":"unknown", "achieved":false, "message":"Command ' + str(data) + ' is not implemented or is unknown"}'
 		except BaseException as stderr:
 			data = None
-			answer = '{"action":"unknown", "achieved":false, "message":"' + tomsg(["Error processing client request:", stderr])[1] + '"}'
+			answer = '{"action":"unknown", "subject":"unknown", "achieved":false, "message":"' + tomsg(["Error processing client request:", stderr])[1] + '"}'
 		# Send server answer to the client (in JSON format)
 		try:
 			# If the command is shutdown stop all server threads and deallocate server object
-			if data is not None and data.action == 'shutdown' and data.subject == 'server':
+			if data is not None and data.action == StateData.Actions[1] and data.subject == StateData.Subjects[0]:
 				self.server.shutdown()
 				self.server = None
 			else:
@@ -667,13 +668,13 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 
 	# Method: runActionEcho
 	def runServerEcho(self):
-		data = '{"action":"echo-server", "achieved":true, "result":{"project":"' + __project__ + '", "module":"' + __module__ + '"'
+		data = '{"action":"' + StateData.Actions[8] + '", "subject":"' + StateData.Subjects[0] + '", "achieved":true, "result":{"project":"' + __project__ + '", "module":"' + __module__ + '"'
 		data += ', "version":"' + __version__ + '", "license":"' + __license__ + '", "copyright":"' + __copyright__ + '"}}'
 		return data
 
 	# Method: runActionStatus
 	def runServerStatus(self):
-		data = '{"action":"status-server", "achieved":true, "result":'
+		data = '{"action":"' + StateData.Actions[7] + '", "subject":"' + StateData.Subjects[0] + '", "achieved":true, "result":'
 		data += '{"project":"' + __project__ + '", "module":"' + __module__ + '", "version":"' + __version__ + '"'
 		data += ', "host":"' + str(self.server_address[0]) + '", "port": ' + str(self.server_address[1]) + ', "services":'
 		if self.getCameras():
@@ -686,21 +687,21 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 					data += '{'
 				else:
 					data += ', {'
-				data += '"CameraId":' + any2str(camera.getId())
-				data += ', "CameraStatus":"On"'
-				data += ', "CameraResolution":"' + ('default' if camera.getCameraResolution() is None else str(camera.getCameraResolution()[0]) + 'x' + str(camera.getCameraResolution()[1])) + '"'
-				data += ', "CameraFramerate":' + ('"default"' if camera.getCameraFramerate() is None else any2str(camera.getCameraFramerate()))
-				data += ', "CameraSleeptime":' + any2str(camera.getCameraSleeptime())
-				data += ', "CameraStreaming":"' + ('On' if camera.isStreamingEnabled() else 'Off') + '"'
-				data += ', "StreamingPort":' + any2str(camera.getStreamingPort())
-				data += ', "StreamingSleeptime":' + any2str(camera.getStreamingSleep())
-				data += ', "CameraMotionDetection":"' + ('On' if camera.isMotionDetectionEnabled() else 'Off') + '"'
+				data += '"' + StateData.Properties[0] + '":' + any2str(camera.getId())
+				data += ', "' + StateData.Properties[1] + '":"On"'
+				data += ', "' + StateData.Properties[4] + '":"' + ('default' if camera.getCameraResolution() is None else str(camera.getCameraResolution()[0]) + 'x' + str(camera.getCameraResolution()[1])) + '"'
+				data += ', "' + StateData.Properties[5] + '":' + ('"default"' if camera.getCameraFramerate() is None else any2str(camera.getCameraFramerate()))
+				data += ', "' + StateData.Properties[6] + '":' + any2str(camera.getCameraSleeptime())
+				data += ', "' + StateData.Properties[2] + '":"' + ('On' if camera.isStreamingEnabled() else 'Off') + '"'
+				data += ', "' + StateData.Properties[12] + '":' + any2str(camera.getStreamingPort())
+				data += ', "' + StateData.Properties[13] + '":' + any2str(camera.getStreamingSleep())
+				data += ', "' + StateData.Properties[3] + '":"' + ('On' if camera.isMotionDetectionEnabled() else 'Off') + '"'
 				if camera.isMotionDetectionEnabled():
-					data += ', "MotionDetectionContour":"' + ('On' if camera.getMotionDetectionContour() else 'Off') + '"'
-					data += ', "MotionDetectionThreshold":' + any2str(camera.getMotionDetectionThreshold())
-					data += ', "MotionDetectionRecording":"' + ('On' if camera.getMotionDetectionRecording() else 'Off') + '"'
-					data += ', "MotionRecordingFormat":"' + any2str(camera.getMotionRecordingFormat()) + '"'
-					data += ', "MotionRecordingLocation":"' + any2str(camera.getMotionRecordingLocation()) + '"'
+					data += ', "' + StateData.Properties[7] + '":"' + ('On' if camera.getMotionDetectionContour() else 'Off') + '"'
+					data += ', "' + StateData.Properties[10] + '":' + any2str(camera.getMotionDetectionThreshold())
+					data += ', "' + StateData.Properties[8] + '":"' + ('On' if camera.getMotionDetectionRecording() else 'Off') + '"'
+					data += ', "' + StateData.Properties[9] + '":"' + any2str(camera.getMotionRecordingFormat()) + '"'
+					data += ', "' + StateData.Properties[11] + '":"' + any2str(camera.getMotionRecordingLocation()) + '"'
 				data += '}'
 				index += 1
 			data += ']'
@@ -737,7 +738,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 		if achieved:
 			result = '"service":"' + key + '"'
 		# Aggregate JSON output
-		return '{"action":"start-service", "achieved":' + str(achieved).lower() + ', "message":"' + msg + '", "result":{' + result + '}}'
+		return '{"action":"' + StateData.Actions[2] + '", "subject":"' + StateData.Subjects[1] + '", "achieved":' + str(achieved).lower() + ', "message":"' + msg + '", "result":{' + result + '}}'
 
 	# Method: runServiceStop
 	def runServiceStop(self, id):
@@ -766,7 +767,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 		if achieved:
 			result = '"service":"' + key + '"'
 		# Aggregate JSON output
-		return '{"action":"stop-service", "achieved":' + str(achieved).lower() + ', "message":"' + msg + '", "result":{' + result + '}}'
+		return '{"action":"' + StateData.Actions[3] + '", "subject":"' + StateData.Subjects[1] + '", "achieved":' + str(achieved).lower() + ', "message":"' + msg + '", "result":{' + result + '}}'
 
 	# Method: runPropertySet
 	def runPropertySet(self, id, camprop, camdata):
@@ -784,46 +785,46 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 					# Identity target camera
 					camera = self.getCameras()[key]
 					# Evaluate CameraStreaming property
-					if camprop.lower() == 'CameraStreaming'.lower():
+					if camprop.lower() == StateData.Properties[2].lower():
 						if any2bool(camdata):
 							camera.setStreamingOn()
 						else:
 							camera.setStreamingOff()
 					# Evaluate CameraMotionDetection property
-					elif camprop.lower() == 'CameraMotionDetection'.lower():
+					elif camprop.lower() == StateData.Properties[3].lower():
 						if any2bool(camdata):
 							camera.setMotionOn()
 						else:
 							camera.setMotionOff()
 					# Evaluate CameraResolution property
-					elif camprop.lower() == 'CameraResolution'.lower():
+					elif camprop.lower() == StateData.Properties[4].lower():
 						camera.setCameraResolution(any2str(camdata))
 					# Evaluate CameraFramerate property
-					elif camprop.lower() == 'CameraFramerate'.lower():
+					elif camprop.lower() == StateData.Properties[5].lower():
 						camera.setCameraFramerate(any2int(camdata))
 					# Evaluate CameraSleeptime property
-					elif camprop.lower() == 'CameraSleeptime'.lower():
+					elif camprop.lower() == StateData.Properties[6].lower():
 						camera.setCameraSleeptime(any2float(camdata))
 					# Evaluate MotionDetectionContour property
-					elif camprop.lower() == 'MotionDetectionContour'.lower():
+					elif camprop.lower() == StateData.Properties[7].lower():
 						camera.setMotionDetectionContour(any2bool(camdata))
 					# Evaluate MotionDetectionThreshold property
-					elif camprop.lower() == 'MotionDetectionThreshold'.lower():
+					elif camprop.lower() == StateData.Properties[10].lower():
 						camera.setMotionDetectionThreshold(any2int(camdata))
 					# Evaluate MotionDetectionRecording property
-					elif camprop.lower() == 'MotionDetectionRecording'.lower():
+					elif camprop.lower() == StateData.Properties[8].lower():
 						camera.setMotionDetectionRecording(any2bool(camdata))
 					# Evaluate MotionRecordingFormat property
-					elif camprop.lower() == 'MotionRecordingFormat'.lower():
+					elif camprop.lower() == StateData.Properties[9].lower():
 						camera.setMotionRecordingFormat(any2str(camdata))
 					# Evaluate MotionRecordingLocation property
-					elif camprop.lower() == 'MotionRecordingLocation'.lower():
+					elif camprop.lower() == StateData.Properties[11].lower():
 						camera.setMotionRecordingLocation(any2str(camdata))
 					# Evaluate StreamingPort property
-					elif camprop.lower() == 'StreamingPort'.lower():
+					elif camprop.lower() == StateData.Properties[12].lower():
 						camera.setStreamingPort(any2int(camdata))
 					# Evaluate StreamingSleeptime property
-					elif camprop.lower() == 'StreamingSleeptime'.lower():
+					elif camprop.lower() == StateData.Properties[13].lower():
 						camera.setStreamingSleep(any2float(camdata))
 					else:
 						achieved = False
@@ -844,7 +845,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 		if achieved:
 			result='"service":"' + key + '", "property":"' + camprop + '", "value":"' + str(camdata) + '"'
 		# Aggregate JSON output
-		return '{"action":"set-property", "achieved":' + str(achieved).lower() + ', "message":"' + msg + '", "result":{' + result + '}}'
+		return '{"action":"' + StateData.Actions[4] + '", "subject":"' + StateData.Subjects[2] + '", "achieved":' + str(achieved).lower() + ', "message":"' + msg + '", "result":{' + result + '}}'
 
 	# Method: runServerLoad
 	def runServerLoad(self, path):
@@ -985,15 +986,15 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 								else:
 									msg += ('. ' + str(jsonout["message"]))
 			except BaseException as stderr:
-				result = ''
+				result = '{}'
 				achieved = False
 				msg = tomsg(["Error loading server configuration from file " + path + ": ", stderr])[1]
 		else:
+			result = '{}'
 			achieved = False
 			msg = "Invalid target location: " + str(path)
 		# Aggregate JSON output
-		print "> TEST NN \n" + '{"action":"load-server", "achieved":' + str(achieved).lower() + ', "message":"' + msg + '", "result":' + json.dumps(result) + '}'
-		return '{"action":"load-server", "achieved":' + str(achieved).lower() + ', "message":"' + msg + '", "result":' + json.dumps(result) + '}'
+		return '{"action":"' + StateData.Actions[9] + '", "subject":"' + StateData.Subjects[0] + '", "achieved":' + str(achieved).lower() + ', "message":"' + msg + '", "result":' + json.dumps(result) + '}'
 
 	# Method: runServerLoad
 	def runServerSave(self, path):
@@ -1012,7 +1013,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 		else:
 			achieved = False
 			msg = "Invalid target location: " + str(path)
-		data = '{"action":"save-server", "achieved":' + str(achieved).lower() + ', "message":"' + msg + '"}'
+		data = '{"action":"' + StateData.Actions[10] + '", "subject":"' + StateData.Subjects[0] + '", "achieved":' + str(achieved).lower() + ', "message":"' + msg + '"}'
 		return data
 
 
@@ -1109,10 +1110,10 @@ class PiCamClient:
 				self.log(errordata)
 				sys.exit(1)
 			else:
-				self._apiData.append('{"action":"unknown", "achieved":false, "message":' + tomsg(errordata)[1])
+				self._apiData.append('{"action":"unknown", "subject": "unknown", "achieved":false, "message":' + tomsg(errordata)[1])
 				return self._apiData
 		# Check if input command ask to start server instance
-		if data.action == "init" and data.subject == "server":
+		if data.action == StateData.Actions[0] and data.subject == StateData.Subjects[0]:
 			try:
 				server = PiCamServer((self._host, self._port), PiCamServerHandler)
 				serverhread = threading.Thread(target=server.serve_forever)
@@ -1123,7 +1124,7 @@ class PiCamClient:
 				if not self._api:
 					self.log(infodata)
 				else:
-					self._apiData.append('{"action":"init", "achieved":true, "message":' + tomsg(infodata)[1])
+					self._apiData.append('{"action":"' + StateData.Actions[0] + '", "subject":"' + StateData.Subjects[0] + '", "achieved":true, "message":' + tomsg(infodata)[1])
 				# Check if the current command is linked by other to execute the whole chain
 				if data.hasLinkedData():
 					data = data.getLinkedData()
@@ -1166,9 +1167,9 @@ class PiCamClient:
 								message = "Server message could not be translated: " + str(answer)
 								level = "ERROR"
 							# Display message to standard output
-							if jsonanswer["action"] == "echo":
+							if jsonanswer["action"] == StateData.Actions[8] and jsonanswer["subject"] == StateData.Subjects[0]:
 								self.log(self._echo(jsonanswer), type="INFO", server=True)
-							elif jsonanswer["action"] == "status":
+							elif jsonanswer["action"] == StateData.Actions[7] and jsonanswer["subject"] == StateData.Subjects[0]:
 								self.log(self._status(jsonanswer), type="INFO", server=True)
 							elif message is not None:
 								self.log(message, type=level, server=True)
@@ -1182,7 +1183,7 @@ class PiCamClient:
 				if not self._api:
 					self.log(errordata)
 				else:
-					self._apiData.append('{"action":"' + data.action + '", "achieved":false, "message":' + tomsg(errordata)[1])
+					self._apiData.append('{"action":"' + data.action + '", "subject":"' + data.subject + '", "achieved":false, "message":' + tomsg(errordata)[1])
 			finally:
 				# Check if the current command is linked by other command
 				if data.hasLinkedData():
@@ -1284,8 +1285,8 @@ class PiCamClient:
 						self._host = data["host"]
 					if data.get("port") and data["port"] != "default":
 						self._port = data["port"]
-					if data.get('server') and (data['server'] == "init" or data['server'] == "shutdown"):
-						content.append("server " + data['server'])
+					if data.get("server") and (data["server"] == StateData.Actions[0] or data["server"] == StateData.Actions[1]):
+						content.append("server " + data["server"])
 					# Handle services
 					if data.get("services"):
 						for service in data['services']:
@@ -1300,7 +1301,7 @@ class PiCamClient:
 								content.append("start service" + CameraId)
 								CameraStarted = True
 							elif service.get("CameraStatus") and not any2bool(service["CameraStatus"]):
-								if data.get('server') is None or (data.get('server') and data['server'] != "init"):
+								if data.get("server") is None or (data.get("server") and data["server"] != StateData.Actions[0]):
 									content.append("stop service" + CameraId)
 								continue
 							# Check camera resolution
@@ -1361,12 +1362,12 @@ class PiCamClient:
 
 # Class: CmdData
 class StateData:
-	_actions = ['init', 'shutdown', 'start', 'stop', 'set', 'enable', 'disable', 'status', 'echo', 'load', 'save']
-	_subjects = ['server', 'service', 'property']
-	_properties = ['CameraStreaming', 'CameraMotionDetection', 'CameraResolution', 'CameraFramerate', 'CameraSleeptime',
-				   'MotionDetectionContour', 'MotionDetectionRecording', 'MotionRecordingFormat', 'MotionDetectionThreshold', 'MotionRecordingLocation',
-				   'StreamingPort', 'StreamingSleeptime']
-	_targetarticles = ['@', 'at', 'on', 'in', 'to', 'from']
+	Actions = ['init', 'shutdown', 'start', 'stop', 'set', 'enable', 'disable', 'status', 'echo', 'load', 'save']
+	Subjects = ['server', 'service', 'property']
+	Properties = ['CameraId', 'CameraStatus', 'CameraStreaming', 'CameraMotionDetection', 'CameraResolution', 'CameraFramerate',
+				  'CameraSleeptime', 'MotionDetectionContour', 'MotionDetectionRecording', 'MotionRecordingFormat', 'MotionDetectionThreshold',
+				  'MotionRecordingLocation', 'StreamingPort', 'StreamingSleeptime']
+	Articles = ['@', 'at', 'on', 'in', 'to', 'from']
 
 	# Constructor
 	def __init__(self, statement):
@@ -1385,15 +1386,15 @@ class StateData:
 		else:
 			raise RuntimeError("Invalid or null client command")
 		# Validate obtained data structure
-		if (self.action == "init" or self.action == "shutdown" or self.action == "status" or self.action == "echo" or self.action == "load" or self.action == "save") and not self.subject == "server":
+		if (self.action == StateData.Actions[0] or self.action == StateData.Actions[1] or self.action == StateData.Actions[7] or self.action == StateData.Actions[8] or self.action == StateData.Actions[9] or self.action == StateData.Actions[10]) and not self.subject == StateData.Subjects[0]:
 			raise RuntimeError("Invalid subject of init/shutdown/status/echo/load/save action: " + any2str(self.subject))
-		elif (self.action == "start" or self.action == "stop") and not self.subject == "service":
+		elif (self.action == StateData.Actions[2] or self.action == StateData.Actions[3]) and self.subject != StateData.Subjects[1]:
 			raise RuntimeError("Invalid subject of start/stop action: " + any2str(self.subject))
-		elif (self.action == "set" or self.action == "enable" or self.action == "disable") and self.subject != "property":
+		elif (self.action == StateData.Actions[4] or self.action == StateData.Actions[5] or self.action == StateData.Actions[6]) and self.subject != StateData.Subjects[2]:
 			raise RuntimeError("Invalid action for property action: " + any2str(self.action))
-		elif self.subject == 'server' and (self.action == "load" or self.action == "save") and self.target is None:
+		elif self.subject == StateData.Subjects[0] and (self.action == StateData.Actions[9] or self.action == StateData.Actions[10]) and self.target is None:
 			raise RuntimeError("Unknown target for the specified subject and action: " + any2str(self.subject) + "/" + any2str(self.action))
-		elif (self.subject == 'service' or self.subject == 'property') and self.target is None:
+		elif (self.subject == StateData.Subjects[1] or self.subject == StateData.Subjects[2]) and self.target is None:
 			raise RuntimeError("Unknown target for the specified subject and action: " + any2str(self.subject) + "/" + any2str(self.action))
 		elif self.action is None or self.action == '':
 			raise RuntimeError("Action can not be null")
@@ -1403,17 +1404,17 @@ class StateData:
 	# Method: _parse
 	def _parse(self, data):
 		if data is not None and data != []:
-			if data[0].strip() in self._actions:
+			if data[0].strip() in self.Actions:
 				self.action = data[0].strip()
 				del data[0]
 				self._parse(data)
-			elif data[0].strip() in self._subjects:
+			elif data[0].strip() in self.Subjects:
 				self.subject = data[0].strip()
 				del data[0]
-				if self.subject == self._subjects[2]:
+				if self.subject == self.Subjects[2]:
 					index = None
-					useprep = list(set(self._targetarticles) & set(data))
-					useaction = list(set(self._actions) & set(data))
+					useprep = list(set(self.Articles) & set(data))
+					useaction = list(set(self.Actions) & set(data))
 					if useprep:
 						index = data.index(useprep[0])
 					if useaction and (index is None or data.index(useaction[0]) < index):
@@ -1424,10 +1425,10 @@ class StateData:
 					else:
 						self.property = ' '.join(data).strip()
 						del data[:]
-					if not self.property.split('=')[0].strip() in self._properties:
+					if not self.property.split('=')[0].strip() in self.Properties:
 						raise RuntimeError("Invalid property: " + self.property.split('=')[0].strip())
 				self._parse(data)
-			elif data[0].strip() in self._targetarticles:
+			elif data[0].strip() in self.Articles:
 				del data[0]
 				if data[0].strip()[0] in ['.', '/']:
 					self.target = str(data[0].strip())
@@ -1443,7 +1444,7 @@ class StateData:
 		outcmd = None
 		if self.action is not None and self.subject is not None:
 			outcmd = self.action + " " + self.subject
-			if self.subject == self._subjects[2]:
+			if self.subject == self.Subjects[2]:
 				outcmd += " " + self.property
 		if self.target is not None:
 			outcmd += " on " + self.target
@@ -1466,19 +1467,19 @@ class StateData:
 
 	# Method: getActions
 	def getActions(self):
-		return self._actions
+		return self.Actions
 
 	# Method: getSujects
 	def getSujects(self):
-		return self._subjects
+		return self.Subjects
 
 	# Method: getProperties
 	def getProperties(self):
-		return self._properties
+		return self.Properties
 
 	# Method: getArticles
 	def getArticles(self):
-		return self._targetarticles
+		return self.Articles
 
 
 # Function: usage
