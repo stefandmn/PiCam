@@ -652,6 +652,20 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 		TCPServer.__init__(self, server_address, handler, bind_and_activate=bind_and_activate)
 		self._running = True
 
+	# Method _answer
+	def _answer(self, action, subject, achieved, message=None, result=None):
+		data = '{"action":"' + action + '", "subject":"' + subject + '", "achieved":' + str(achieved).lower()
+		if message is not None and message != '':
+			data += ', "message":"' + message + '"'
+		if result is not None and result != '':
+			if isinstance(result, str):
+				data += ', "result":' + result + '}'
+			else:
+				data += ', "result":' + json.dumps(result) + '}'
+		else:
+			data += '}'
+		return data
+
 	# Method: getCameras
 	def getCameras(self):
 		return self._cameras
@@ -668,52 +682,53 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 
 	# Method: runActionEcho
 	def runServerEcho(self):
-		data = '{"action":"' + StateData.Actions[8] + '", "subject":"' + StateData.Subjects[0] + '", "achieved":true, "result":{"project":"' + __project__ + '", "module":"' + __module__ + '"'
-		data += ', "version":"' + __version__ + '", "license":"' + __license__ + '", "copyright":"' + __copyright__ + '"}}'
-		return data
+		result = '"{"project":"' + __project__ + '", "module":"' + __module__ + '", "version":"' + __version__ + '", "license":"' + __license__ + '", "copyright":"' + __copyright__ + '"}'
+		# Aggregate JSON output
+		return self._answer(StateData.Actions[8], StateData.Subjects[0], True, None, result)
 
 	# Method: runActionStatus
 	def runServerStatus(self):
-		data = '{"action":"' + StateData.Actions[7] + '", "subject":"' + StateData.Subjects[0] + '", "achieved":true, "result":'
-		data += '{"project":"' + __project__ + '", "module":"' + __module__ + '", "version":"' + __version__ + '"'
-		data += ', "host":"' + str(self.server_address[0]) + '", "port": ' + str(self.server_address[1]) + ', "services":'
+		result = '{"project":"' + __project__ + '", "module":"' + __module__ + '", "version":"' + __version__ + '"'
+		result += ', "host":"' + str(self.server_address[0]) + '", "port": ' + str(self.server_address[1]) + ', "services":'
 		if self.getCameras():
-			data += '['
+			result += '['
 			index = 0
 			keys = self.getCameras().keys()
 			for key in keys:
 				camera = self.getCameras()[key]
 				if index == 0:
-					data += '{'
+					result += '{'
 				else:
-					data += ', {'
-				data += '"' + StateData.Properties[0] + '":' + any2str(camera.getId())
-				data += ', "' + StateData.Properties[1] + '":"On"'
-				data += ', "' + StateData.Properties[4] + '":"' + ('default' if camera.getCameraResolution() is None else str(camera.getCameraResolution()[0]) + 'x' + str(camera.getCameraResolution()[1])) + '"'
-				data += ', "' + StateData.Properties[5] + '":' + ('"default"' if camera.getCameraFramerate() is None else any2str(camera.getCameraFramerate()))
-				data += ', "' + StateData.Properties[6] + '":' + any2str(camera.getCameraSleeptime())
-				data += ', "' + StateData.Properties[2] + '":"' + ('On' if camera.isStreamingEnabled() else 'Off') + '"'
-				data += ', "' + StateData.Properties[12] + '":' + any2str(camera.getStreamingPort())
-				data += ', "' + StateData.Properties[13] + '":' + any2str(camera.getStreamingSleep())
-				data += ', "' + StateData.Properties[3] + '":"' + ('On' if camera.isMotionDetectionEnabled() else 'Off') + '"'
+					result += ', {'
+				result += '"' + StateData.Properties[0] + '":' + any2str(camera.getId())
+				result += ', "' + StateData.Properties[1] + '":"On"'
+				result += ', "' + StateData.Properties[4] + '":"' + ('default' if camera.getCameraResolution() is None else str(camera.getCameraResolution()[0]) + 'x' + str(camera.getCameraResolution()[1])) + '"'
+				result += ', "' + StateData.Properties[5] + '":' + ('"default"' if camera.getCameraFramerate() is None else any2str(camera.getCameraFramerate()))
+				result += ', "' + StateData.Properties[6] + '":' + any2str(camera.getCameraSleeptime())
+				result += ', "' + StateData.Properties[2] + '":"' + ('On' if camera.isStreamingEnabled() else 'Off') + '"'
+				result += ', "' + StateData.Properties[12] + '":' + any2str(camera.getStreamingPort())
+				result += ', "' + StateData.Properties[13] + '":' + any2str(camera.getStreamingSleep())
+				result += ', "' + StateData.Properties[3] + '":"' + ('On' if camera.isMotionDetectionEnabled() else 'Off') + '"'
 				if camera.isMotionDetectionEnabled():
-					data += ', "' + StateData.Properties[7] + '":"' + ('On' if camera.getMotionDetectionContour() else 'Off') + '"'
-					data += ', "' + StateData.Properties[10] + '":' + any2str(camera.getMotionDetectionThreshold())
-					data += ', "' + StateData.Properties[8] + '":"' + ('On' if camera.getMotionDetectionRecording() else 'Off') + '"'
-					data += ', "' + StateData.Properties[9] + '":"' + any2str(camera.getMotionRecordingFormat()) + '"'
-					data += ', "' + StateData.Properties[11] + '":"' + any2str(camera.getMotionRecordingLocation()) + '"'
-				data += '}'
+					result += ', "' + StateData.Properties[7] + '":"' + ('On' if camera.getMotionDetectionContour() else 'Off') + '"'
+					result += ', "' + StateData.Properties[10] + '":' + any2str(camera.getMotionDetectionThreshold())
+					result += ', "' + StateData.Properties[8] + '":"' + ('On' if camera.getMotionDetectionRecording() else 'Off') + '"'
+					result += ', "' + StateData.Properties[9] + '":"' + any2str(camera.getMotionRecordingFormat()) + '"'
+					result += ', "' + StateData.Properties[11] + '":"' + any2str(camera.getMotionRecordingLocation()) + '"'
+				result += '}'
 				index += 1
-			data += ']'
+			result += ']'
 		else:
-			data += '[]'
-		data += '}}'
-		return data
+			result += '[]'
+		result += '}'
+		# Aggregate JSON output
+		return self._answer(StateData.Actions[7], StateData.Subjects[0], True, None, result)
 
 	# Method: runServiceStart
 	def runServiceStart(self, id):
-		achieved = False
-		result = ''
+		achieved = True
+		result = None
+		msg = None
 		if id is not None:
 			if isinstance(id, int):
 				key = '#' + str(id)
@@ -727,23 +742,24 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 					camera.setStreamingPort(self.server_address[1] + 1 + camera.getId())
 					camera.start()
 					self.getCameras()[key] = camera
-					achieved = True
 					msg = "Camera " + key + " has been started"
 				except BaseException as stderr:
+					achieved = False
 					msg = tomsg(["Error starting camera " + key + ":", stderr])[1]
 		else:
 			key = None
 			msg = "Camera identifier was not specified"
 		# Define result key
-		if achieved:
-			result = '"service":"' + key + '"'
+		if achieved and key is not None:
+			result = '{"service":"' + key + '"}'
 		# Aggregate JSON output
-		return '{"action":"' + StateData.Actions[2] + '", "subject":"' + StateData.Subjects[1] + '", "achieved":' + str(achieved).lower() + ', "message":"' + msg + '", "result":{' + result + '}}'
+		return self._answer(StateData.Actions[2], StateData.Subjects[1], achieved, msg, result)
 
 	# Method: runServiceStop
 	def runServiceStop(self, id):
-		achieved = False
-		result = ''
+		achieved = True
+		result = None
+		msg = None
 		if id is not None:
 			if isinstance(id, int):
 				key = '#' + str(id)
@@ -754,9 +770,9 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 					camera = self.getCameras()[key]
 					camera.stop()
 					del self.getCameras()[key]
-					achieved = True
 					msg = "Camera " + key + " has been stopped"
 				except BaseException as stderr:
+					achieved = False
 					msg = tomsg(["Error stopping camera " + key + ":", stderr])[1]
 			else:
 				msg = "Camera " + key + " was not yet started"
@@ -764,16 +780,16 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 			key = None
 			msg = "Camera could not be identified to stop service"
 		# Define result key
-		if achieved:
-			result = '"service":"' + key + '"'
+		if achieved and key is not None:
+			result = '{"service":"' + key + '"}'
 		# Aggregate JSON output
-		return '{"action":"' + StateData.Actions[3] + '", "subject":"' + StateData.Subjects[1] + '", "achieved":' + str(achieved).lower() + ', "message":"' + msg + '", "result":{' + result + '}}'
+		return self._answer(StateData.Actions[3], StateData.Subjects[1], achieved, msg, result)
 
 	# Method: runPropertySet
 	def runPropertySet(self, id, camprop, camdata):
 		achieved = True
-		result = ''
-		msg = ''
+		result = None
+		msg = None
 		if id is not None:
 			if isinstance(id, int):
 				key = '#' + str(id)
@@ -839,18 +855,18 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 				msg = "Camera " + key + " is not yet started"
 		else:
 			key = None
-			achieved = False
 			msg = "Camera could not be identified to set property"
 		# Define result key
-		if achieved:
-			result='"service":"' + key + '", "property":"' + camprop + '", "value":"' + str(camdata) + '"'
+		if achieved and key is not None:
+			result='{"service":"' + key + '", "property":"' + camprop + '", "value":"' + str(camdata) + '"}'
 		# Aggregate JSON output
-		return '{"action":"' + StateData.Actions[4] + '", "subject":"' + StateData.Subjects[2] + '", "achieved":' + str(achieved).lower() + ', "message":"' + msg + '", "result":{' + result + '}}'
+		return self._answer(StateData.Actions[4], StateData.Subjects[2], achieved, msg, result)
 
 	# Method: runServerLoad
 	def runServerLoad(self, path):
 		achieved = True
 		result = None
+		msg = None
 		if path is not None and os.path.isfile(path):
 			try:
 				# Read the file content
@@ -887,21 +903,24 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 						if service.get("CameraResolution") and service["CameraResolution"] != "default":
 							jsonout = json.loads(self.runPropertySet(CameraId, "CameraResolution", service["CameraResolution"]))
 							if jsonout["achieved"]:
-								result["set-properties"].append(jsonout["result"]["property"])
+								if result["set-properties"].count(jsonout["result"]["property"]) == 0:
+									result["set-properties"].append(jsonout["result"]["property"])
 							else:
 								msg += ('. ' + str(jsonout["message"]))
 						# Check camera framerate
 						if service.get("CameraFramerate") and service["CameraFramerate"] != "default":
 							jsonout = json.loads(self.runPropertySet(CameraId, "CameraFramerate", service["CameraFramerate"]))
 							if jsonout["achieved"]:
-								result["set-properties"].append(jsonout["result"]["property"])
+								if result["set-properties"].count(jsonout["result"]["property"]) == 0:
+									result["set-properties"].append(jsonout["result"]["property"])
 							else:
 								msg += ('. ' + str(jsonout["message"]))
 						# Check camera sleeptime
 						if service.get("CameraSleeptime") and service["CameraSleeptime"] != "default":
 							jsonout = json.loads(self.runPropertySet(CameraId, "CameraSleeptime", service["CameraSleeptime"]))
 							if jsonout["achieved"]:
-								result["set-properties"].append(jsonout["result"]["property"])
+								if result["set-properties"].count(jsonout["result"]["property"]) == 0:
+									result["set-properties"].append(jsonout["result"]["property"])
 							else:
 								msg += ('. ' + str(jsonout["message"]))
 						# Check camera streaming
@@ -909,26 +928,30 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 							if service.get("CameraStreaming") and any2bool(service["CameraStreaming"]):
 								jsonout = json.loads(self.runPropertySet(CameraId, "CameraStreaming", service["CameraStreaming"]))
 								if jsonout["achieved"]:
-									result["set-properties"].append(jsonout["result"]["property"])
+									if result["set-properties"].count(jsonout["result"]["property"]) == 0:
+										result["set-properties"].append(jsonout["result"]["property"])
 								else:
 									msg += ('. ' + str(jsonout["message"]))
 							if service.get("StreamingPort") and service["StreamingPort"] != "default":
 								jsonout = json.loads(self.runPropertySet(CameraId, "StreamingPort", service["StreamingPort"]))
 								if jsonout["achieved"]:
-									result["set-properties"].append(jsonout["result"]["property"])
+									if result["set-properties"].count(jsonout["result"]["property"]) == 0:
+										result["set-properties"].append(jsonout["result"]["property"])
 								else:
 									msg += ('. ' + str(jsonout["message"]))
 							if service.get("StreamingSleeptime") and service["StreamingSleeptime"] != "default":
 								jsonout = json.loads(self.runPropertySet(CameraId, "StreamingSleeptime", service["StreamingSleeptime"]))
 								if jsonout["achieved"]:
-									result["set-properties"].append(jsonout["result"]["property"])
+									if result["set-properties"].count(jsonout["result"]["property"]) == 0:
+										result["set-properties"].append(jsonout["result"]["property"])
 								else:
 									msg += ('. ' + str(jsonout["message"]))
 						elif service.get("CameraStreaming") and not any2bool(service["CameraStreaming"]):
 							if not CameraStarted:
 								jsonout = json.loads(self.runPropertySet(CameraId, "CameraStreaming", service["CameraStreaming"]))
 								if jsonout["achieved"]:
-									result["set-properties"].append(jsonout["result"]["property"])
+									if result["set-properties"].count(jsonout["result"]["property"]) == 0:
+										result["set-properties"].append(jsonout["result"]["property"])
 								else:
 									msg += ('. ' + str(jsonout["message"]))
 						# Check camera motion detection
@@ -936,19 +959,22 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 							if service.get("CameraMotionDetection") and any2bool(service["CameraMotionDetection"]):
 								jsonout = json.loads(self.runPropertySet(CameraId, "CameraMotionDetection", service["CameraMotionDetection"]))
 								if jsonout["achieved"]:
-									result["set-properties"].append(jsonout["result"]["property"])
+									if result["set-properties"].count(jsonout["result"]["property"]) == 0:
+										result["set-properties"].append(jsonout["result"]["property"])
 								else:
 									msg += ('. ' + str(jsonout["message"]))
 							if service.get("MotionDetectionContour") and service["MotionDetectionContour"] != "default":
 								jsonout = json.loads(self.runPropertySet(CameraId, "MotionDetectionContour", service["MotionDetectionContour"]))
 								if jsonout["achieved"]:
-									result["set-properties"].append(jsonout["result"]["property"])
+									if result["set-properties"].count(jsonout["result"]["property"]) == 0:
+										result["set-properties"].append(jsonout["result"]["property"])
 								else:
 									msg += ('. ' + str(jsonout["message"]))
 							if service.get("MotionDetectionThreshold") and service["MotionDetectionThreshold"] != "default":
 								jsonout = json.loads(self.runPropertySet(CameraId, "MotionDetectionThreshold", service["MotionDetectionThreshold"]))
 								if jsonout["achieved"]:
-									result["set-properties"].append(jsonout["result"]["property"])
+									if result["set-properties"].count(jsonout["result"]["property"]) == 0:
+										result["set-properties"].append(jsonout["result"]["property"])
 								else:
 									msg += ('. ' + str(jsonout["message"]))
 							# Check motion detection recording option
@@ -956,45 +982,49 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 								if service.get("MotionDetectionRecording") and any2bool(service["MotionDetectionRecording"]):
 									jsonout = json.loads(self.runPropertySet(CameraId, "MotionDetectionRecording", service["MotionDetectionRecording"]))
 									if jsonout["achieved"]:
-										result["set-properties"].append(jsonout["result"]["property"])
+										if result["set-properties"].count(jsonout["result"]["property"]) == 0:
+											result["set-properties"].append(jsonout["result"]["property"])
 									else:
 										msg += ('. ' + str(jsonout["message"]))
 								if service.get("MotionRecordingFormat") and service["MotionRecordingFormat"] != "default":
 									jsonout = json.loads(self.runPropertySet(CameraId, "MotionRecordingFormat", service["MotionRecordingFormat"]))
 									if jsonout["achieved"]:
-										result["set-properties"].append(jsonout["result"]["property"])
+										if result["set-properties"].count(jsonout["result"]["property"]) == 0:
+											result["set-properties"].append(jsonout["result"]["property"])
 									else:
 										msg += ('. ' + str(jsonout["message"]))
 								if service.get("MotionRecordingLocation") and service["MotionRecordingLocation"] != "default":
 									jsonout = json.loads(self.runPropertySet(CameraId, "MotionRecordingLocation", service["MotionRecordingLocation"]))
 									if jsonout["achieved"]:
-										result["set-properties"].append(jsonout["result"]["property"])
+										if result["set-properties"].count(jsonout["result"]["property"]) == 0:
+											result["set-properties"].append(jsonout["result"]["property"])
 									else:
 										msg += ('. ' + str(jsonout["message"]))
 							elif service.get("MotionDetectionRecording") and not any2bool(service["MotionDetectionRecording"]):
 								if not CameraStarted:
 									jsonout = json.loads(self.runPropertySet(CameraId, "MotionDetectionRecording", service["MotionDetectionRecording"]))
 									if jsonout["achieved"]:
-										result["set-properties"].append(jsonout["result"]["property"])
+										if result["set-properties"].count(jsonout["result"]["property"]) == 0:
+											result["set-properties"].append(jsonout["result"]["property"])
 									else:
 										msg += ('. ' + str(jsonout["message"]))
 						elif service.get("CameraMotionDetection") and not any2bool(service["CameraMotionDetection"]):
 							if not CameraStarted:
 								jsonout = json.loads(self.runPropertySet(CameraId, "CameraMotionDetection", service["CameraMotionDetection"]))
 								if jsonout["achieved"]:
-									result["set-properties"].append(jsonout["result"]["property"])
+									if result["set-properties"].count(jsonout["result"]["property"]) == 0:
+										result["set-properties"].append(jsonout["result"]["property"])
 								else:
 									msg += ('. ' + str(jsonout["message"]))
 			except BaseException as stderr:
-				result = '{}'
+				result = None
 				achieved = False
 				msg = tomsg(["Error loading server configuration from file " + path + ": ", stderr])[1]
 		else:
-			result = '{}'
 			achieved = False
 			msg = "Invalid target location: " + str(path)
 		# Aggregate JSON output
-		return '{"action":"' + StateData.Actions[9] + '", "subject":"' + StateData.Subjects[0] + '", "achieved":' + str(achieved).lower() + ', "message":"' + msg + '", "result":' + json.dumps(result) + '}'
+		return self._answer(StateData.Actions[9], StateData.Subjects[0], achieved, msg, result)
 
 	# Method: runServerLoad
 	def runServerSave(self, path):
