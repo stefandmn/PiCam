@@ -29,6 +29,12 @@ from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 
 # Class: Camera
 class Camera(threading.Thread):
+	# Constants
+	Sleeptime = 0.05
+	Resolution = (640,480)
+	StreamSleeptime = 0.05
+	StreamStartPort = 9080
+	# Constructor
 	def __init__(self, id, motion=False, streaming=False):
 		# Validate camera id input parameter
 		if id is not None and str(id).startswith('#'):
@@ -41,12 +47,12 @@ class Camera(threading.Thread):
 		self._stop = threading.Event()
 		# Initialize class public variables (class parameters)
 		self._id = id
-		self._resolution = (640,480)
+		self._resolution = Camera.Resolution
 		self._framerate = None
-		self._sleeptime = 0.05
+		self._sleeptime = Camera.Sleeptime
 		# Streaming properties
-		self._s_sleep = 0.05
-		self._s_port = 9080
+		self._s_sleep = Camera.StreamSleeptime
+		self._s_port = Camera.StreamStartPort
 		# Initialize class private variables
 		self._exec = False
 		self._lock = True
@@ -666,6 +672,30 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 			data += '}'
 		return data
 
+	# Method: _simplify
+	def _simplify(self, services):
+		status = True
+		for service in services:
+			try:
+				# CameraSleeptime
+				if service.get(StateData.Properties[6]) and any2float(service[StateData.Properties[6]]) == Camera.Sleeptime:
+					service[StateData.Properties[6]] = "default"
+				# CameraResolution
+				if service.get(StateData.Properties[4]) and any2str(service[StateData.Properties[4]]).lower().find("x") > 0 and (int(any2str(service[StateData.Properties[4]]).lower().split('x')[0].strip()), int(any2str(service[StateData.Properties[4]]).lower().split('x')[1].strip())) == Camera.Resolution:
+					service[StateData.Properties[4]] = "default"
+				elif service.get(StateData.Properties[4]) and any2str(service[StateData.Properties[4]]).lower().find(",") > 0 and (int(any2str(service[StateData.Properties[4]]).lower().split(',')[0].strip()), int(any2str(service[StateData.Properties[4]]).lower().split(',')[1].strip())) == Camera.Resolution:
+					service[StateData.Properties[4]] = "default"
+				# StreamingSleeptime
+				if service.get(StateData.Properties[13]) and any2float(service[StateData.Properties[13]]) == Camera.StreamSleeptime:
+					service[StateData.Properties[13]] = "default"
+				# StreamingPort
+				if service.get(StateData.Properties[12]) and any2float(service[StateData.Properties[12]]) == Camera.StreamStartPort + int(filter(str.isdigit, str(service[StateData.Properties[0]]).strip())):
+					service[StateData.Properties[12]] = "default"
+			except:
+				# No action needed
+				status = False
+		return status
+
 	# Method: getCameras
 	def getCameras(self):
 		return self._cameras
@@ -863,28 +893,35 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 		return self._answer(StateData.Actions[4], StateData.Subjects[2], achieved, msg, result)
 
 	# Method: runServerLoad
-	def runServerLoad(self, path):
+	def runServerLoad(self, path=None):
 		achieved = True
 		result = None
 		msg = None
-		if path is not None and os.path.isfile(path):
+		# Set default configuration (if is bit specified)
+		if path is None:
+			path = "/opt/clue/etc/picam.cfg"
+		# Load and handle configuration
+		if os.path.isfile(path):
 			try:
 				# Read the file content
 				file = open(path, 'r')
 				cfg = json.load(file)
 				file.close()
-				msg = "Loading configuration from target: " + str(path)
+				msg = "Loading configuration from target location: " + str(path)
 				result = json.loads('{"file":"' + path + '", "start-services":[], "stop-services":[], "set-properties":[]}')
 				if cfg.get("services"):
+					# Mark default values
+					self._simplify(cfg["services"])
+					# Load services from configuration
 					for service in cfg['services']:
 						# Validate camera id and status
-						if service.get("CameraId") is None:
+						if service.get(StateData.Properties[0]) is None:
 							continue
 						# Get camera identifier
-						CameraId = int(filter(str.isdigit, str(service["CameraId"])))
+						CameraId = int(filter(str.isdigit, str(service[StateData.Properties[0]])))
 						CameraStarted = False
-						# Check camera status
-						if service.get("CameraStatus") and any2bool(service["CameraStatus"]):
+						# CameraStatus
+						if service.get(StateData.Properties[1]) and any2bool(service[StateData.Properties[1]]):
 							jsonout = json.loads(self.runServiceStart(CameraId))
 							CameraStarted = jsonout["achieved"]
 							if jsonout["achieved"]:
@@ -892,14 +929,14 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 							else:
 								msg += ('. ' + str(jsonout["message"]))
 								continue
-						elif service.get("CameraStatus") and not any2bool(service["CameraStatus"]):
+						elif service.get(StateData.Properties[1]) and not any2bool(service[StateData.Properties[1]]):
 							jsonout = json.loads(self.runServiceStop(CameraId))
 							if jsonout["achieved"]:
 								result["stop-services"].append(jsonout["result"]["service"])
 							else:
 								msg += ('. ' + str(jsonout["message"]))
 							continue
-						# Check camera resolution
+						# CameraResolution
 						if service.get("CameraResolution") and service["CameraResolution"] != "default":
 							jsonout = json.loads(self.runPropertySet(CameraId, "CameraResolution", service["CameraResolution"]))
 							if jsonout["achieved"]:
@@ -907,7 +944,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 									result["set-properties"].append(jsonout["result"]["property"])
 							else:
 								msg += ('. ' + str(jsonout["message"]))
-						# Check camera framerate
+						# CameraFramerate
 						if service.get("CameraFramerate") and service["CameraFramerate"] != "default":
 							jsonout = json.loads(self.runPropertySet(CameraId, "CameraFramerate", service["CameraFramerate"]))
 							if jsonout["achieved"]:
@@ -915,7 +952,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 									result["set-properties"].append(jsonout["result"]["property"])
 							else:
 								msg += ('. ' + str(jsonout["message"]))
-						# Check camera sleeptime
+						# CameraSleeptime
 						if service.get("CameraSleeptime") and service["CameraSleeptime"] != "default":
 							jsonout = json.loads(self.runPropertySet(CameraId, "CameraSleeptime", service["CameraSleeptime"]))
 							if jsonout["achieved"]:
@@ -923,7 +960,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 									result["set-properties"].append(jsonout["result"]["property"])
 							else:
 								msg += ('. ' + str(jsonout["message"]))
-						# Check camera streaming
+						# CameraStreaming
 						if not service.get("CameraStreaming") or (service.get("CameraStreaming") and service["CameraStreaming"] == "default") or (service.get("CameraStreaming") and any2bool(service["CameraStreaming"])):
 							if service.get("CameraStreaming") and any2bool(service["CameraStreaming"]):
 								jsonout = json.loads(self.runPropertySet(CameraId, "CameraStreaming", service["CameraStreaming"]))
@@ -932,6 +969,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 										result["set-properties"].append(jsonout["result"]["property"])
 								else:
 									msg += ('. ' + str(jsonout["message"]))
+							# StreamingPort
 							if service.get("StreamingPort") and service["StreamingPort"] != "default":
 								jsonout = json.loads(self.runPropertySet(CameraId, "StreamingPort", service["StreamingPort"]))
 								if jsonout["achieved"]:
@@ -939,6 +977,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 										result["set-properties"].append(jsonout["result"]["property"])
 								else:
 									msg += ('. ' + str(jsonout["message"]))
+							# StreamingSleeptime
 							if service.get("StreamingSleeptime") and service["StreamingSleeptime"] != "default":
 								jsonout = json.loads(self.runPropertySet(CameraId, "StreamingSleeptime", service["StreamingSleeptime"]))
 								if jsonout["achieved"]:
@@ -954,7 +993,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 										result["set-properties"].append(jsonout["result"]["property"])
 								else:
 									msg += ('. ' + str(jsonout["message"]))
-						# Check camera motion detection
+						# CameraMotionDetection
 						if not service.get("CameraMotionDetection") or (service.get("CameraMotionDetection") and service["CameraMotionDetection"] == "default") or (service.get("CameraMotionDetection") and any2bool(service["CameraMotionDetection"])):
 							if service.get("CameraMotionDetection") and any2bool(service["CameraMotionDetection"]):
 								jsonout = json.loads(self.runPropertySet(CameraId, "CameraMotionDetection", service["CameraMotionDetection"]))
@@ -963,6 +1002,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 										result["set-properties"].append(jsonout["result"]["property"])
 								else:
 									msg += ('. ' + str(jsonout["message"]))
+							# MotionDetectionContour
 							if service.get("MotionDetectionContour") and service["MotionDetectionContour"] != "default":
 								jsonout = json.loads(self.runPropertySet(CameraId, "MotionDetectionContour", service["MotionDetectionContour"]))
 								if jsonout["achieved"]:
@@ -970,6 +1010,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 										result["set-properties"].append(jsonout["result"]["property"])
 								else:
 									msg += ('. ' + str(jsonout["message"]))
+							# MotionDetectionThreshold
 							if service.get("MotionDetectionThreshold") and service["MotionDetectionThreshold"] != "default":
 								jsonout = json.loads(self.runPropertySet(CameraId, "MotionDetectionThreshold", service["MotionDetectionThreshold"]))
 								if jsonout["achieved"]:
@@ -977,7 +1018,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 										result["set-properties"].append(jsonout["result"]["property"])
 								else:
 									msg += ('. ' + str(jsonout["message"]))
-							# Check motion detection recording option
+							# MotionDetectionRecording
 							if not service.get("MotionDetectionRecording") or (service.get("MotionDetectionRecording") and service["MotionDetectionRecording"] == "default") or (service.get("MotionDetectionRecording") and any2bool(service["MotionDetectionRecording"])):
 								if service.get("MotionDetectionRecording") and any2bool(service["MotionDetectionRecording"]):
 									jsonout = json.loads(self.runPropertySet(CameraId, "MotionDetectionRecording", service["MotionDetectionRecording"]))
@@ -986,6 +1027,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 											result["set-properties"].append(jsonout["result"]["property"])
 									else:
 										msg += ('. ' + str(jsonout["message"]))
+								# MotionRecordingFormat
 								if service.get("MotionRecordingFormat") and service["MotionRecordingFormat"] != "default":
 									jsonout = json.loads(self.runPropertySet(CameraId, "MotionRecordingFormat", service["MotionRecordingFormat"]))
 									if jsonout["achieved"]:
@@ -993,6 +1035,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 											result["set-properties"].append(jsonout["result"]["property"])
 									else:
 										msg += ('. ' + str(jsonout["message"]))
+								# MotionRecordingLocation
 								if service.get("MotionRecordingLocation") and service["MotionRecordingLocation"] != "default":
 									jsonout = json.loads(self.runPropertySet(CameraId, "MotionRecordingLocation", service["MotionRecordingLocation"]))
 									if jsonout["achieved"]:
@@ -1027,24 +1070,46 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 		return self._answer(StateData.Actions[9], StateData.Subjects[0], achieved, msg, result)
 
 	# Method: runServerLoad
-	def runServerSave(self, path):
+	def runServerSave(self, path=None):
 		achieved = True
-		if path is not None and os.path.isfile(path):
-			try:
-				# Read the file content
+		result = None
+		try:
+			# Set default configuration
+			if path is None:
+				path = "/opt/clue/etc/picam.cfg"
+			# Get server status
+			status = json.loads(self.runServerStatus())
+			# Read the file configuration (if exists)
+			if path is not None and  os.path.isfile(path):
 				file = open(path, 'r')
-				cfgdata = json.load(file)
+				cfg = json.load(file)
 				file.close()
-
-				message = "Configuration saved in target location: " + str(path)
-			except BaseException as stderr:
-				achieved = False
-				msg = tomsg(["Error saving server configuration in file " + path + ": ", stderr])[1]
-		else:
+				if cfg.get("services"):
+					del cfg["services"]
+				cfg["services"] = status["result"]["services"]
+			else:
+				cfg = json.loads('{"host":"' + status["result"]["host"] + '", "port":' + str(status["result"]["port"]) + '}')
+				cfg["services"] = status["result"]["services"]
+			# Mark default values
+			self._simplify(cfg["services"])
+			# Write consolidated configuration in file
+			file = open(path, 'w')
+			file.write(json.dumps(cfg, indent=4, sort_keys=True))
+			file.close()
+			msg = "Configuration saved in target location: " + str(path)
+			result = json.loads('{"file":"' + path + '", "start-services":[], "set-properties":[]}')
+			for service in cfg["services"]:
+				for key in service.keys():
+					if key is not None and key == StateData.Properties[0]:
+						result["start-services"].append('#' + filter(str.isdigit, str(service[StateData.Properties[0]]).strip()))
+					elif key is not None and key != StateData.Properties[1]:
+						if result["set-properties"].count(service[key]) == 0:
+							result["set-properties"].append(service[key])
+		except BaseException as stderr:
 			achieved = False
-			msg = "Invalid target location: " + str(path)
-		data = '{"action":"' + StateData.Actions[10] + '", "subject":"' + StateData.Subjects[0] + '", "achieved":' + str(achieved).lower() + ', "message":"' + msg + '"}'
-		return data
+			msg = tomsg(["Error saving server configuration in file " + path + ": ", stderr])[1]
+		# Aggregate JSON output
+		return self._answer(StateData.Actions[10], StateData.Subjects[0], achieved, msg, result)
 
 
 # Class: StreamHandler
@@ -1269,7 +1334,7 @@ class PiCamClient:
 			text = "Status of " + answer["result"]["project"] + " " + answer["result"]["module"] + " " + answer["result"]["version"]
 			text += '\n\t> server: ' + answer["result"]["host"] + ":" + any2str(answer["result"]["port"])
 			for service in answer["result"]["services"]:
-				text += '\n\t> Service: #' + any2str(service["CameraId"])
+				text += '\n\t> Service: #' + any2str(service[StateData.Properties[0]])
 				# Main Properties
 				text += '\n\t\t| CameraResolution: ' + ('default' if service["CameraResolution"] is None else any2str(service["CameraResolution"]))
 				text += '\n\t\t| CameraFramerate: ' + any2str(service["CameraFramerate"])
@@ -1321,36 +1386,36 @@ class PiCamClient:
 					if data.get("services"):
 						for service in data['services']:
 							# Validate camera id
-							if service.get("CameraId") is None:
+							if service.get(StateData.Properties[0]) is None:
 								continue
 							# Get camera identifier
-							CameraId = " on #" + any2str(service["CameraId"])
+							CameraId = " on #" + any2str(service[StateData.Properties[0]])
 							CameraStarted = False
 							# Check camera status
-							if service.get("CameraStatus") and any2bool(service["CameraStatus"]):
+							if service.get(StateData.Properties[1]) and any2bool(service[StateData.Properties[1]]):
 								content.append("start service" + CameraId)
 								CameraStarted = True
-							elif service.get("CameraStatus") and not any2bool(service["CameraStatus"]):
+							elif service.get(StateData.Properties[1]) and not any2bool(service[StateData.Properties[1]]):
 								if data.get("server") is None or (data.get("server") and data["server"] != StateData.Actions[0]):
 									content.append("stop service" + CameraId)
 								continue
 							# Check camera resolution
 							if service.get("CameraResolution") and service["CameraResolution"] != "default":
-								content.append("set property CameraResolution=" + service["CameraResolution"] + CameraId)
+								content.append("set property CameraResolution=" + any2str(service["CameraResolution"]) + CameraId)
 							# Check camera framerate
 							if service.get("CameraFramerate") and service["CameraFramerate"] != "default":
-								content.append("set property CameraFramerate=" + service["CameraFramerate"] + CameraId)
+								content.append("set property CameraFramerate=" + any2str(service["CameraFramerate"]) + CameraId)
 							# Check camera sleeptime
 							if service.get("CameraSleeptime") and service["CameraSleeptime"] != "default":
-								content.append("set property CameraSleeptime=" + service["CameraSleeptime"] + CameraId)
+								content.append("set property CameraSleeptime=" + any2str(service["CameraSleeptime"]) + CameraId)
 							# Check camera streaming
 							if not service.get("CameraStreaming") or (service.get("CameraStreaming") and service["CameraStreaming"] == "default") or (service.get("CameraStreaming") and any2bool(service["CameraStreaming"])):
 								if service.get("CameraStreaming") and any2bool(service["CameraStreaming"]):
 									content.append("enable property CameraStreaming" + CameraId)
 								if service.get("StreamingPort") and service["StreamingPort"] != "default":
-									content.append("set property StreamingPort=" + service["StreamingPort"] + CameraId)
+									content.append("set property StreamingPort=" + any2str(service["StreamingPort"]) + CameraId)
 								if service.get("StreamingSleeptime") and service["StreamingSleeptime"] != "default":
-									content.append("set property StreamingSleeptime=" + service["StreamingSleeptime"] + CameraId)
+									content.append("set property StreamingSleeptime=" + any2str(service["StreamingSleeptime"]) + CameraId)
 							elif service.get("CameraStreaming") and not any2bool(service["CameraStreaming"]):
 								if not CameraStarted:
 									content.append("disable property CameraStreaming" + CameraId)
@@ -1363,15 +1428,15 @@ class PiCamClient:
 								elif service.get("MotionDetectionContour") and service["MotionDetectionContour"] != "default" and not any2bool(service["MotionDetectionContour"]):
 									content.append("disable property MotionDetectionContour" + CameraId)
 								if service.get("MotionDetectionThreshold") and service["MotionDetectionThreshold"] != "default":
-									content.append("set property MotionDetectionThreshold=" + str(service["MotionDetectionThreshold"]) + CameraId)
+									content.append("set property MotionDetectionThreshold=" + any2str(service["MotionDetectionThreshold"]) + CameraId)
 								# Check motion detection recording option
 								if not service.get("MotionDetectionRecording") or (service.get("MotionDetectionRecording") and service["MotionDetectionRecording"] == "default") or (service.get("MotionDetectionRecording") and any2bool(service["MotionDetectionRecording"])):
 									if service.get("MotionDetectionRecording") and any2bool(service["MotionDetectionRecording"]):
 										content.append("enable property MotionDetectionRecording" + CameraId)
 									if service.get("MotionRecordingFormat") and service["MotionRecordingFormat"] != "default":
-										content.append("set property MotionRecordingFormat=" + service["MotionRecordingFormat"] + CameraId)
+										content.append("set property MotionRecordingFormat=" + any2str(service["MotionRecordingFormat"]) + CameraId)
 									if service.get("MotionRecordingLocation") and service["MotionRecordingLocation"] != "default":
-										content.append("set property MotionRecordingLocation=" + service["MotionRecordingLocation"] + CameraId)
+										content.append("set property MotionRecordingLocation=" + any2str(service["MotionRecordingLocation"]) + CameraId)
 								elif service.get("MotionDetectionRecording") and not any2bool(service["MotionDetectionRecording"]):
 									if not CameraStarted:
 										content.append("disable property MotionDetectionRecording" + CameraId)
@@ -1422,8 +1487,6 @@ class StateData:
 			raise RuntimeError("Invalid subject of start/stop action: " + any2str(self.subject))
 		elif (self.action == StateData.Actions[4] or self.action == StateData.Actions[5] or self.action == StateData.Actions[6]) and self.subject != StateData.Subjects[2]:
 			raise RuntimeError("Invalid action for property action: " + any2str(self.action))
-		elif self.subject == StateData.Subjects[0] and (self.action == StateData.Actions[9] or self.action == StateData.Actions[10]) and self.target is None:
-			raise RuntimeError("Unknown target for the specified subject and action: " + any2str(self.subject) + "/" + any2str(self.action))
 		elif (self.subject == StateData.Subjects[1] or self.subject == StateData.Subjects[2]) and self.target is None:
 			raise RuntimeError("Unknown target for the specified subject and action: " + any2str(self.subject) + "/" + any2str(self.action))
 		elif self.action is None or self.action == '':
