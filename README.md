@@ -49,9 +49,9 @@ The commands accepted by PiCam client and server components have been defined ar
    - **CameraMotionDetection** = activate/de-activate motion detection (by default any activated camera/service will use start motion detection service), 
    - **MotionDetectionContour** = activate/de-activate to draw a contour for detected motion on each camera frame (by default it is active), 
    - **MotionDetectionThreshold** = set the motion detection threshold for vieweing and recording; any motion 'volume' over this value will be shown marked and/or recorded, 
-   - **MotionDetectionRecording** = activate/de-activate recording (in pictures or videos) for detected motion; by default the option is enabled, 
-   - **MotionRecordingFormat** = set the recording format for motion detection; the possible values could be `image` or `video` (default value is _image_), 
-   - **MotionRecordingLocation** = set the recording location, 
+   - **CameraRecording** = activate/de-activate camera recording (image or video format); by default the option is disabled, 
+   - **RecordingFormat** = set the recording format for camera recording function; the options are `image` or `video` (default value is _image_), 
+   - **RecordingLocation** = set location for the file(s) that will be created by recording service, 
    - **StreamingPort** = set streaming port, 
    - **StreamingSleeptime** = set streaming sleeping time between displayed frames.
  - **articles** - used target indicators are: **to**, **at**, **on**, **in**, **@**. After the article you have to specify the camera target (#0, #1, .. - so the camera target is the camera index having `#` prefix).
@@ -73,8 +73,8 @@ If you want to start using this application you have to perform the following st
 3. Open a shell console and execute the following command to start the server and also one of the cameras (including streaming service): `pycam.py "init server and start service on #1 or enable property CameraStreaming on #1"`. In case you have attached a Pi camera replace `#1` with `#0`. If you installed release file user `/opt/clue/bin/picacm` binary instead direct call of `picam.py`
 4. Open a browser and check `http://RPiHostname:9081` for USB camera or `http://RPiHostname:9080` for Pi camera
 5. (Optional) If you want to start the second USB camera you have to execute the following command: `pycam.py "start service on #2 or enable property CameraStreaming on #2"`
-6. (Optional) If you want to run motion detection for the first camera you need to open another shell console and to execute the following command: `pycam.py "enable property MotionDetectionRecording on #1"`. **Attention!** it will store image samples in `/tmp` folder. _Please notice that **MotionDetectionRecording** activates also **CameraMotionDetection** property._ 
-7. (Optional) If you want to change the default location where the motion detection samples are store execute the following command: `pycam.py "set property MotionRecordingLocation=/mnt/data on #1"`.
+6. (Optional) If you want to run motion detection for the first camera you need to open another shell console and to execute the following command: `pycam.py "enable property CameraRecording on #1"`. **Attention!** it will store image samples in `/tmp` folder. _Please notice that **CameraRecording** activates also **CameraMotionDetection** property._ 
+7. (Optional) If you want to change the default location where the motion detection samples are store execute the following command: `pycam.py "set property RecordingLocation=/mnt/data on #1"`.
 8. (Optional) If you want to see the PiCam server configuration and all activates service just run `pycam.py server status`. This client command will interrogate the server from localhost, if you want to interrogate a remote server just use the command line option described before (`-c` to aggreate the command into one single text and `-h` to specifiy the server hostname)
 
 
@@ -108,8 +108,8 @@ Below are described the common use-cases for **PiCam** usage:
 
 5. Start Motion Detection over USB camera and activate also the recording function to store movies
 ```shell
-> picam enable property CameraMotionDetection on c1 and enable property MotionDetectionRecording on c1 and set property MotionRecordingFormat=video on c1
-> picam -c "enable property CameraMotionDetection on #1 and enable property MotionDetectionRecording on c1 and set property MotionRecordingFormat=video on c1"
+> picam enable property CameraMotionDetection on c1 and enable property CameraRecording on c1 and set property RecordingFormat=video on c1
+> picam -c "enable property CameraMotionDetection on #1 and enable property CameraRecording on c1 and set property RecordingFormat=video on c1"
 ```
 
 6. Stop remotely Streaming property for remote USB camera

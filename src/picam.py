@@ -29,13 +29,15 @@ from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 
 # Class: Camera
 class Camera(threading.Thread):
+
 	# Constants
 	Sleeptime = 0.05
-	Resolution = (640,480)
+	StreamInterface = '0.0.0.0'
 	StreamSleeptime = 0.05
 	StreamStartPort = 9080
+
 	# Constructor
-	def __init__(self, id, motion=False, streaming=False):
+	def __init__(self, id, motion=False, recording=False, streaming=False):
 		# Validate camera id input parameter
 		if id is not None and str(id).startswith('#'):
 			id = int(filter(str.isdigit, id))
@@ -47,27 +49,27 @@ class Camera(threading.Thread):
 		self._stop = threading.Event()
 		# Initialize class public variables (class parameters)
 		self._id = id
-		self._resolution = Camera.Resolution
-		self._framerate = None
 		self._sleeptime = Camera.Sleeptime
-		# Streaming properties
-		self._s_sleep = Camera.StreamSleeptime
-		self._s_port = Camera.StreamStartPort
+		self._resolution = None
+		self._framerate = None
 		# Initialize class private variables
 		self._exec = False
 		self._lock = True
 		self._frame = None
 		# Define tools
 		self._camera = None
-		self._stream = None
-		self._motion = None
+		self._motion = CamMotion(self)
+		self._stream = CamStreaming(self)
+		self._record = CamRecording(self)
 		# Identify type of camera and initialize camera device
 		self.setCameraOn()
 		# Activate recording if was specified during initialization
 		if motion:
-			self._applyMotion()
+			self._motion.start()
+		if recording:
+			self._record.start()
 		if streaming:
-			self._applyStreaming()
+			self._stream.start()
 		self.log("Service has been initialized")
 
 	# Method: getId
@@ -93,54 +95,18 @@ class Camera(threading.Thread):
 				self._frame = cv.QueryFrame(self._camera)
 			cv.PutText(self._frame, "CAM " + str(self.getId()).rjust(2, '0'), (5, 15), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .35, .35, 0.0, 1, cv.CV_AA), (255, 255, 255))
 
-	# Method: _applyMotion
-	def _applyMotion(self):
-		self._motion = Motion(self)
-
-	# Method: _runMotionDetection
-	def _runMotionDetection(self):
-		if self.isMotionDetectionEnabled():
-			frame = self.getFrame()
-			self._motion.detect(frame)
-
-	# Method: isMotionActive
-	def isMotionDetectionEnabled(self):
-		return self._motion is not None
-
-	# Method: _setStreaming
-	def _applyStreaming(self):
-		try:
-			self._stream = StreamServer(('0.0.0.0', self._s_port), StreamHandler, frame=self.getFrame(), sleep=self._s_sleep)
-			streamthread = threading.Thread(target=self._stream.serve_forever)
-			streamthread.daemon = True
-			streamthread.start()
-			self.log("Streaming started on " + str(self._stream.server_address))
-		except IOError as ioerr:
-			self.log(["Streaming initialization failed:", ioerr])
-			self._stream = None
-
-	# Method: runStreaming
-	def _runStreamingBroadcast(self):
-		if self.isStreamingEnabled():
-			try:
-				if self._stream is not None:
-					self._stream.setFrame(self.getFrame())
-			except IOError as ioerr:
-				self.log(["Sending streaming data failed:", ioerr])
-
-	# Method: isStreaming
-	def isStreamingEnabled(self):
-		return self._stream is not None
-
 	# Method: stop
 	def stop(self):
 		self._exec = False
-		# Stop recording
+		# Stop motion detection
 		if self.isMotionDetectionEnabled():
-			self.setMotionOff()
+			self.setMotionDetection(False)
+		# Stop motion detection
+		if self.isRecordingEnabled():
+			self.setRecording(False)
 		# Stop streaming
 		if self.isStreamingEnabled():
-			self.setStreamingOff()
+			self.setStreaming(False)
 		# Stop camera
 		self.setCameraOff()
 		# Stop this thread
@@ -165,15 +131,25 @@ class Camera(threading.Thread):
 			try:
 				# Capture next frame
 				self.setFrame()
-				# If motion recording feature is active identify motion and save pictures
-				self._runMotionDetection()
+				# If motion detection feature is active run it to detect motion
+				if self.isMotionDetectionEnabled():
+					self._motion.run(self._frame)
+				# If recording feature is active run it to record images or videos
+				if self.isRecordingEnabled():
+					self._record.run(self._frame)
 				# If the streaming is active send the picture through the streaming channel
-				self._runStreamingBroadcast()
+				if self.isStreamingEnabled():
+					self._stream.run(self._frame)
 				# Sleep for couple of seconds or milliseconds
-				time.sleep(self._sleeptime)
+				if self._sleeptime > 0:
+					time.sleep(self._sleeptime)
 			except BaseException as baserr:
 				self.log(["Camera workflow failed:", baserr])
 				self.stop()
+
+	# Method: isCameraOn
+	def isCameraOn(self):
+		return self._camera is not None
 
 	# Method: setCameraOn
 	def setCameraOn(self):
@@ -184,12 +160,8 @@ class Camera(threading.Thread):
 					self._camera = PiCamera()
 					if self._resolution is not None:
 						self._camera.resolution = self._resolution
-					else:
-						self._resolution = self._camera.resolution
 					if self._framerate is not None:
 						self._camera.framerate = self._framerate
-					else:
-						self._framerate = self._camera.framerate
 				else:
 					self._camera = cv.CaptureFromCAM(self._id - 1)
 					if self._resolution is not None:
@@ -202,6 +174,10 @@ class Camera(threading.Thread):
 				self.log(["Camera service initialization failed:", baseerr])
 		else:
 			self.log("Camera service is already started")
+
+	# Method: isCameraOff
+	def isCameraOff(self):
+		return self._camera is None
 
 	# Method: setCameraOff
 	def setCameraOff(self):
@@ -244,6 +220,10 @@ class Camera(threading.Thread):
 			except BaseException as baseerr:
 				self.log(["Applying camera resolution failed:", baseerr])
 
+	# Method: getCameraResolution
+	def getCameraResolution(self):
+		return self._resolution
+
 	# Method: setCameraFramerate
 	def setCameraFramerate(self, framerate):
 		if self._camera is not None and framerate is not None:
@@ -260,161 +240,197 @@ class Camera(threading.Thread):
 			except BaseException as baseerr:
 				self.log(["Applying camera framerate failed:", baseerr])
 
+	# Method: getCameraFramerate
+	def getCameraFramerate(self):
+		return self._framerate
+
 	# Method: setCameraSleeptime
 	def setCameraSleeptime(self, sleeptime):
 		self._sleeptime = sleeptime
-
-	# Method: setMotionOn
-	def setMotionOn(self):
-		if not self.isMotionDetectionEnabled():
-			self._applyMotion()
-		else:
-			self.log("Motion detection function is already enabled")
-
-	# Method: setMotionOff
-	def setMotionOff(self):
-		if self.isMotionDetectionEnabled():
-			self._motion = None
-		else:
-			self.log("Motion detection function is not enabled")
-
-	# Method: setMotionDetectionRecording
-	def setMotionDetectionRecording(self, recording):
-		if self.isMotionDetectionEnabled():
-			self._motion.setRecording(recording)
-		else:
-			self.log("Motion detection will be activated for recording")
-			self.setMotionOn()
-			self._motion.setRecording(recording)
-
-	# Method: setMotionRecordingLocation
-	def setMotionRecordingLocation(self, location):
-		if self.isMotionDetectionEnabled():
-			self._motion.setLocation(location)
-		else:
-			self.log("Motion detection function will be activated to set recording location")
-			self.setMotionOn()
-			self._motion.setLocation(location)
-
-	# Method: setMotionRecordingFormat
-	def setMotionRecordingFormat(self, format):
-		if self.isMotionDetectionEnabled():
-			self._motion.setFormat(format)
-		else:
-			self.log("Motion detection function will be activated to set recording format")
-			self.setMotionOn()
-			self._motion.setFormat(format)
-
-	# Method: setMotionDetectionThreshold
-	def setMotionDetectionThreshold(self, threshold):
-		if self.isMotionDetectionEnabled():
-			self._motion.setThreshold(threshold)
-		else:
-			self.log("Motion detection function will be activated to set motion threshold")
-			self.setMotionOn()
-			self._motion.setThreshold(threshold)
-
-	# Method: setMotionDetectionContour
-	def setMotionDetectionContour(self, contour):
-		if self.isMotionDetectionEnabled():
-			self._motion.setContour(contour)
-		else:
-			self.log("Motion detection function will be activated to set motion contour")
-			self.setMotionOn()
-			self._motion.setContour(contour)
-
-	# Method: setStreamingOn
-	def setStreamingOn(self):
-		if not self.isStreamingEnabled():
-			self._applyStreaming()
-		else:
-			self.log("Streaming function is already enabled")
-
-	# Method: setStreamingOff
-	def setStreamingOff(self):
-		if self.isStreamingEnabled():
-			try:
-				self._stream.shutdown()
-				self._stream.server_close()
-				self._stream = None
-			except IOError as ioerr:
-				self.log(["Streaming function has been stopped with errors:", ioerr])
-				self._stream = None
-		else:
-			self.log("Streaming function is not enabled")
-
-	# Method: setStreamingPort
-	def setStreamingPort(self, port):
-		self._s_port = port
-		if self.isStreamingEnabled():
-			self.setStreamingOff()
-			self.setStreamingOn()
-
-	# Method: setStreamingSleep
-	def setStreamingSleep(self, sleep):
-		self._s_sleep = sleep
-		if self.isStreamingEnabled():
-			self._stream.setSleep(sleep)
-
-	# Method: getCameraResolution
-	def getCameraResolution(self):
-		return self._resolution
 
 	# Method: getCameraSleeptime
 	def getCameraSleeptime(self):
 		return self._sleeptime
 
-	# Method: getCameraFramerate
-	def getCameraFramerate(self):
-		return self._framerate
+	# Method: isMotionActive
+	def isMotionDetectionEnabled(self):
+		return self._motion.isRunning()
 
-	# Method: getStreamingPort
-	def getStreamingPort(self):
-		return self._s_port
+	# Method: setMotionDetection
+	def setMotionDetection(self, flag):
+		if not self.isMotionDetectionEnabled() and flag:
+			self._motion.start()
+		elif self.isMotionDetectionEnabled() and not flag:
+			self._motion.stop()
+		elif self.isMotionDetectionEnabled() and flag:
+			self.log("Motion Detection function is already activated")
+		elif not self.isMotionDetectionEnabled() and not flag:
+			self.log("Motion Detection function is not activated")
 
-	# Method: getStreamingSleep
-	def getStreamingSleep(self):
-		return self._s_sleep
-
-	# Method: getMotionDetectionRecording
-	def getMotionDetectionRecording(self):
-		return self._motion.isRecording()
-
-	# Method: getMotionRecordingFormat
-	def getMotionRecordingFormat(self):
-		return self._motion.getFormat()
-
-	# Method: getMotionRecordingLocation
-	def getMotionRecordingLocation(self):
-		return self._motion.getLocation()
+	# Method: setMotionDetectionThreshold
+	def setMotionDetectionThreshold(self, threshold):
+		self._motion.setThreshold(threshold)
 
 	# Method: getMotionDetectionThreshold
 	def getMotionDetectionThreshold(self):
 		return self._motion.getThreshold()
 
+	# Method: setMotionDetectionContour
+	def setMotionDetectionContour(self, contour):
+		self._motion.setContour(contour)
+
 	# Method: getMotionDetectionContour
 	def getMotionDetectionContour(self):
 		return self._motion.isContour()
 
+	# Method: isRecordingEnabled
+	def isRecordingEnabled(self):
+		return self._record.isRunning()
 
-# Class: Motion
-class Motion:
+	# Method: setCameraRecording
+	def setRecording(self, flag):
+		if not self.isRecordingEnabled() and flag:
+			self._record.start()
+		elif self.isRecordingEnabled() and not flag:
+			self._record.stop()
+		elif self.isRecordingEnabled() and flag:
+			self.log("Recording function is already activated")
+		elif not self.isRecordingEnabled() and not flag:
+			self.log("Recording function is not activated")
+
+	# Method: setRecordingLocation
+	def setRecordingLocation(self, location):
+		if self.isRecordingEnabled():
+			self._record.stop()
+			self.setRecordingReset()
+			self._record.setLocation(location)
+			self._record.start()
+		else:
+			self.setRecordingReset()
+			self._record.setLocation(location)
+
+	# Method: getRecordingLocation
+	def getRecordingLocation(self):
+		return self._record.getLocation()
+
+	# Method: setRecordingFormat
+	def setRecordingFormat(self, format):
+		if self.isRecordingEnabled():
+			self._record.stop()
+			self.setRecordingReset()
+			self._record.setFormat(format)
+			self._record.start()
+		else:
+			self.setRecordingReset()
+			self._record.setFormat(format)
+
+	# Method: getRecordingFormat
+	def getRecordingFormat(self):
+		return self._record.getFormat()
+
+	# Method: setRecordingMessage
+	def setRecordingMessage(self, text):
+		self._record.setMessage(text)
+
+	# Method: setRecordingSkip
+	def setRecordingSkipped(self, skip):
+		self._record.setSkip(skip)
+
+	# Method: isRecordingSkipped
+	def isRecordingSkipped(self):
+		return self._record.isSkipped()
+
+	# Method: setRecordingReset
+	def setRecordingReset(self):
+		self._record.reset()
+
+	# Method: isStreamingEnabled
+	def isStreamingEnabled(self):
+		return self._stream.isRunning()
+
+	# Method: setStreamingOn
+	def setStreaming(self, flag):
+		if not self.isStreamingEnabled() and flag:
+			self._stream.start()
+		elif self.isStreamingEnabled() and not flag:
+			self._stream.stop()
+		elif self.isStreamingEnabled() and flag:
+			self.log("Streaming function is already activated")
+		elif not self.isStreamingEnabled() and not flag:
+			self.log("Streaming function is not activated")
+
+	# Method: setStreamingPort
+	def setStreamingPort(self, port):
+		if self.isStreamingEnabled():
+			self._stream.stop()
+			self._stream.setStreamingPort(port)
+			self._stream.start()
+		else:
+			self._stream.setStreamingPort(port)
+
+	# Method: getStreamingPort
+	def getStreamingPort(self):
+		return self._stream.getStreamingPort()
+
+	# Method: setStreamingSleep
+	def setStreamingSleep(self, sleep):
+		self._stream.setStreamingSleep(sleep)
+
+	# Method: getStreamingSleep
+	def getStreamingSleep(self):
+		return self.getStreamingSleep()
+
+
+# Class: CamFunction
+class CamFunction:
+
+	# Constructor
+	def __init(self, camera, active=False):
+		self._running = active
+		self._camera = camera
+
+	# Method: start
+	def start(self):
+		if self._camera.isCameraOn:
+			self._running = True
+		else:
+			self._running = False
+
+	# Method: stop
+	def stop(self):
+		self._running = False
+
+	# Method: isRunning
+	def isRunning(self):
+		if self._camera.isCameraOn:
+			return self._running
+		else:
+			return False
+
+	# Method: run
+	def run(self, frame):
+		return
+
+	# Method: log
+	def log(self, data):
+		type, message = tomsg(data)
+		if message != '':
+			print "%s | %s %s > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), type, "Service", message)
+
+
+# Class: CamMotion
+class CamMotion(CamFunction):
 	# Constructor
 	def __init__(self, camera):
-		# Set input parameters
-		self._camera = camera
-		# Initialize engine parameters
-		self._gray = None
-		self._size = (320,240)
-		self._ismot = False
-		self._fkmot = 0
-		self._avmot = None
-		# Motion detection parametrization
-		self._format = 'image'
+		CamFunction.__init__(camera)
+		# Motion detection properties
 		self._contour = True
-		self._recording = False
 		self._threshold = 1500
-		self._location = '/tmp'
+		# Initialize engine parameters
+		self.__gray = None
+		self.__size = (320,240)
+		self.__ismot = False
+		self.__fkmot = 0
 
 	# Method: isContour
 	def isContour(self):
@@ -424,14 +440,6 @@ class Motion:
 	def setContour(self, contour):
 		self._contour = contour
 
-	# Method: isRecording
-	def isRecording(self):
-		return self._recording
-
-	# Method: setRecording
-	def setRecording(self, recording):
-		self._recording = recording
-
 	# Method: getThreshold
 	def getThreshold(self):
 		return self._threshold
@@ -440,75 +448,33 @@ class Motion:
 	def setThreshold(self, threshold):
 		self._threshold = threshold
 
-	# Method: getLocation
-	def getLocation(self):
-		return self._location
-
-	# Method: setLocation
-	def setLocation(self, location):
-		self._location = location
-
-	# Method: getFormat
-	def getFormat(self):
-		return self._format
-
-	# Method: setFormat
-	def setFormat(self, format):
-		self._format = format
-
-	# Method: write
-	def write(self, frame, text, area=0):
-		try:
-			clone = cv.CloneImage(frame)
-			message = text + " @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
-			cv.PutText(clone, message, (10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .32, .32, 0.0, 1, cv.CV_AA), (255, 255, 255))
-			if self._format == 'image':
-				filename = self.getLocation() + os.path.sep + "cam" + str(self._camera.getId()).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-				if area > 0:
-					filename += "-" + str(area) + ".png"
-				else:
-					filename += ".png"
-				cv.SaveImage(filename, clone)
-			elif self._format == 'video':
-				if not self._ismot:
-					if self._avmot is not None:
-						del(self._avmot)
-						self._avmot = None
-					filename = self.getLocation() + os.path.sep + "cam" + str(self._camera.getId()).rjust(2, '0') + "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".avi"
-					self._avmot = cv.CreateVideoWriter(filename, cv.CV_FOURCC('M', 'J', 'P', 'G'), 2, cv.GetSize(frame), True)
-				if self._ismot and self._avmot is not None:
-					cv.WriteFrame(self._avmot, clone)
-		except IOError as ioerr:
-			self._camera.log(["Saving motion data failed:", ioerr])
-			self._camera._recording = False
-
-	# Method: gray
-	def gray(self, frame):
+	# Method: _gray
+	def _gray(self, frame):
 		copy = cv.CreateImage(cv.GetSize(frame), cv.IPL_DEPTH_8U, 1)
 		cv.CvtColor(frame, copy, cv.CV_RGB2GRAY)
-		resize = cv.CreateImage(self._size, cv.IPL_DEPTH_8U, 1)
+		resize = cv.CreateImage(self.__size, cv.IPL_DEPTH_8U, 1)
 		cv.Resize(copy, resize)
 		return resize
 
-	# Method: absdiff
-	def absdiff(self, frame1, frame2):
+	# Method: _absdiff
+	def _absdiff(self, frame1, frame2):
 		output = cv.CloneImage(frame1)
 		cv.AbsDiff(frame1, frame2, output)
 		return output
 
-	# Method: threshold
-	def threshold(self, frame):
+	# Method: _compute
+	def _compute(self, frame):
 		cv.Threshold(frame, frame, 35, 255, cv.CV_THRESH_BINARY)
 		cv.Dilate(frame, frame, None, 18)
 		cv.Erode(frame, frame, None, 10)
 		return frame
 
-	# Method: area
-	def area(self, move, frame):
+	# Method: _area
+	def _area(self, move, frame):
 		points = []
 		area = 0
-		xsize = cv.GetSize(frame)[0] / self._size[0]
-		ysize = cv.GetSize(frame)[1] / self._size[1]
+		xsize = cv.GetSize(frame)[0] / self.__size[0]
+		ysize = cv.GetSize(frame)[1] / self.__size[1]
 		storage = cv.CreateMemStorage(0)
 		contour = cv.FindContours(move, storage, cv.CV_RETR_CCOMP, cv.CV_CHAIN_APPROX_SIMPLE)
 		while contour:
@@ -525,30 +491,236 @@ class Motion:
 				cv.Rectangle(frame, pt1, pt2, cv.CV_RGB(255,0,0), 1)
 		return area
 
-	# Method: detect
-	def detect(self, frame):
+	# Method: run
+	def run(self, frame):
 		if frame is not None:
 			# Check if is needed to initialize the engine
-			if self._gray is None:
-				self.write(frame, "Start monitoring")
-				self._gray = self.gray(frame)
+			if self.__gray is None:
+				if self._camera.isRecordingEnabled() and self._camera.getRecordingFormat() == 'image':
+					self._camera.setRecordingMessage("Start Monitoring")
+				self.__gray = self._gray(frame)
 			else:
-				_gray = self.gray(frame)
-				_diff = self.absdiff(self._gray, _gray)
-				_move = self.threshold(_diff)
-				_area = self.area(_move, frame)
+				_gray = self._gray(frame)
+				_diff = self._absdiff(self.__gray, _gray)
+				_move = self._compute(_diff)
+				_area = self._area(_move, frame)
 				# Evaluation
-				if self.isRecording():
+				if self._camera.isRecordingEnabled():
 					if _area > self.getThreshold():
-						self.write(frame, "Motion detected", _area)
-						self._ismot = True
-						self._fkmot = 0
-					elif self._ismot:
-						self._fkmot += 1
-						if self._fkmot > 59:
-							self._ismot = False
-							self._fkmot = 0
-				self._gray = _gray
+						self.__ismot = True
+						self.__fkmot = 0
+						if self._camera.isRecordingSkipped():
+							self._camera.setRecordingReset()
+						self._camera.setRecordingMessage("Motion Detection")
+					elif self.__ismot:
+						self.__fkmot += 1
+						if self.__fkmot > 59:
+							if not self._camera.isRecordingSkipped():
+								self._camera.setRecordingSkipped(True)
+							self.__ismot = False
+							self.__fkmot = 0
+				self.__gray = _gray
+
+
+# Class: CamRecording
+class CamRecording(CamFunction):
+	# Constructor
+	def __init__(self, camera):
+		CamFunction.__init__(camera)
+		self._format = 'image'
+		self._location = '/tmp'
+		self.__skip = False
+		self.__text = None
+		self.__vref = None
+
+	# Method: getFormat
+	def getFormat(self):
+		return self._format
+
+	# Method: setFormat
+	def setFormat(self, format):
+		if format is not None:
+			if format.lower() in ("image", "picture", "photo", "pic", "i", "p"):
+				self._format = 'image'
+			elif format.lower() in ("video", "movie", "v", "m"):
+				self._format = 'video'
+
+	# Method: getLocation
+	def getLocation(self):
+		return self._location
+
+	# Method: setLocation
+	def setLocation(self, location):
+		self._location = location
+
+	# Method: setMessage
+	def setMessage(self, text):
+		self._text = text
+
+	# Method: setSkip
+	def setSkip(self, skip):
+		self._skip = skip
+
+	# Method: isSkipped
+	def isSkipped(self):
+		return self._skip
+
+	# Method: run
+	def run(self, frame):
+		if not self.__skip and self._running:
+			try:
+				clone = cv.CloneImage(frame)
+				message = self.__text + " @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
+				cv.PutText(clone, message, (10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .32, .32, 0.0, 1, cv.CV_AA), (255, 255, 255))
+				if self._format == 'image':
+					filename = self._location + os.path.sep + "cam" + str(self._camera.getId()).rjust(2, '0')
+					filename += "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+					filename += ".png"
+					cv.SaveImage(filename, clone)
+				elif self._format == 'video':
+					if self._vref is not None:
+						cv.WriteFrame(self._vref, clone)
+					else:
+						filename = self._location + os.path.sep + "cam" + str(self._camera.getId()).rjust(2, '0')
+						filename += "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".avi"
+						self._vref = cv.CreateVideoWriter(filename, cv.CV_FOURCC('M', 'J', 'P', 'G'), 2, cv.GetSize(frame), True)
+			except IOError as ioerr:
+				self.log(["Recording function failed:", ioerr])
+				self.stop()
+
+	# Method: reset
+	def reset(self):
+		self.__vref = None
+		self.__text = None
+		self.__skip = False
+
+
+# Class: CamStreaming
+class CamStreaming(CamFunction):
+	# Constructor
+	def __init__(self, camera):
+		CamFunction.__init__(camera)
+		self._stream = None
+		self._sleep = Camera.StreamSleeptime
+		self._iface = Camera.StreamInterface
+		self._port = Camera.StreamStartPort
+
+	# Method: start
+	def start(self):
+		if self._camera.isCameraOn:
+			try:
+				self._stream = StreamingServer((self._iface, self._port), StreamHandler, frame=None, sleep=self._sleep)
+				streamthread = threading.Thread(target=self._stream.serve_forever)
+				streamthread.daemon = True
+				streamthread.start()
+				self._running = True
+				self.log("Streaming started on " + str(self._stream.server_address))
+			except IOError as ioerr:
+				self.log(["Streaming initialization failed:", ioerr])
+				self._stream = None
+				self._running = False
+
+	# Method: stop
+	def stop(self):
+		if self._stream is not None:
+			try:
+				self._stream.shutdown()
+				self._stream.server_close()
+				self._stream = None
+			except IOError as ioerr:
+				self.log(["Streaming function has been stopped with errors:", ioerr])
+				self._stream = None
+		self._running = False
+
+	# Method: getStreamingPort
+	def getStreamingPort(self):
+		return self._port
+
+	# Method: setStreamingPort
+	def setStreamingPort(self, port):
+		self._port = port
+
+	# Method: StreamingSleep
+	def getStreamingSleep(self):
+		return self._sleep
+
+	# Method: setStreamingSleep
+	def setStreamingSleep(self, sleeptime):
+		self._sleep = sleeptime
+		if self._stream is not None:
+			self._stream.setSleep(sleeptime)
+
+	# Method: run
+	def run(self, frame):
+		if self._stream is not None and self._running:
+			try:
+				self._stream.setFrame(frame)
+			except IOError as ioerr:
+				self.log(["Sending streaming data failed:", ioerr])
+
+
+# Class: StreamHandler
+class StreamHandler(BaseHTTPRequestHandler):
+	# Constructor
+	def __init__(self, request, client_address, server):
+		self._server = server
+		BaseHTTPRequestHandler.__init__(self, request, client_address, server)
+
+	# Method: do_GET
+	def do_GET(self):
+		try:
+			self.send_response(200)
+			self.send_header("Connection", "close")
+			self.send_header("Max-Age", "0")
+			self.send_header("Expires", "0")
+			self.send_header("Cache-Control", "no-cache, private")
+			self.send_header("Pragma", "no-cache")
+			self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=--BOUNDARYSTRING")
+			self.end_headers()
+			while True:
+				if self._server.getFrame() is None:
+					continue
+				JpegData = cv.EncodeImage(".jpeg", self._server.getFrame(), (cv.CV_IMWRITE_JPEG_QUALITY, 75)).tostring()
+				self.wfile.write("--BOUNDARYSTRING\r\n")
+				self.send_header("Content-type", "image/jpeg")
+				self.send_header("Content-Length", str(len(JpegData)))
+				self.end_headers()
+				self.wfile.write(JpegData)
+				self.wfile.write("\r\n")
+				time.sleep(self._server.getSleep())
+			return
+		except BaseException as baseerr:
+			self.send_error(500, 'PiCam Streaming Server Error: \r\n\r\n%s' % str(baseerr))
+			if __verbose__:
+				traceback.print_exc()
+
+
+# Class: StreamingServer
+class StreamingServer(ThreadingMixIn, HTTPServer):
+	allow_reuse_address = True
+	daemon_threads = True
+
+	# Constructor
+	def __init__(self, server_address, handler, bind_and_activate=True, frame=None, sleep=0.01):
+		HTTPServer.__init__(self, server_address, handler, bind_and_activate=bind_and_activate)
+		self._frame = frame
+		self._sleep = sleep
+
+	# Method: getFrame
+	def getFrame(self):
+		return self._frame
+
+	# Method: getFrame
+	def setFrame(self, frame):
+		self._frame = frame
+
+	# Method: getSleep
+	def getSleep(self):
+		return self._sleep
+
+	# Method: setSleep
+	def setSleep(self, sleep):
+		self._sleep	= sleep
 
 
 # Class: PiCamServerHandler
@@ -567,7 +739,7 @@ class PiCamServerHandler(BaseRequestHandler):
 		# Process client requests
 		try:
 			self.log("Receiving client request: " + str(command))
-			# Instantiate client structure to detect the action and subject
+			# Instantiate client structure to run the action and subject
 			data = StateData(command)
 			# Evaluate server actions
 			if data is not None and data.subject == StateData.Subjects[0]:
@@ -680,11 +852,6 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 				# CameraSleeptime
 				if service.get(StateData.Properties[6]) and any2float(service[StateData.Properties[6]]) == Camera.Sleeptime:
 					service[StateData.Properties[6]] = "default"
-				# CameraResolution
-				if service.get(StateData.Properties[4]) and any2str(service[StateData.Properties[4]]).lower().find("x") > 0 and (int(any2str(service[StateData.Properties[4]]).lower().split('x')[0].strip()), int(any2str(service[StateData.Properties[4]]).lower().split('x')[1].strip())) == Camera.Resolution:
-					service[StateData.Properties[4]] = "default"
-				elif service.get(StateData.Properties[4]) and any2str(service[StateData.Properties[4]]).lower().find(",") > 0 and (int(any2str(service[StateData.Properties[4]]).lower().split(',')[0].strip()), int(any2str(service[StateData.Properties[4]]).lower().split(',')[1].strip())) == Camera.Resolution:
-					service[StateData.Properties[4]] = "default"
 				# StreamingSleeptime
 				if service.get(StateData.Properties[13]) and any2float(service[StateData.Properties[13]]) == Camera.StreamSleeptime:
 					service[StateData.Properties[13]] = "default"
@@ -736,15 +903,17 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 				result += ', "' + StateData.Properties[5] + '":' + ('"default"' if camera.getCameraFramerate() is None else any2str(camera.getCameraFramerate()))
 				result += ', "' + StateData.Properties[6] + '":' + any2str(camera.getCameraSleeptime())
 				result += ', "' + StateData.Properties[2] + '":"' + ('On' if camera.isStreamingEnabled() else 'Off') + '"'
-				result += ', "' + StateData.Properties[12] + '":' + any2str(camera.getStreamingPort())
-				result += ', "' + StateData.Properties[13] + '":' + any2str(camera.getStreamingSleep())
+				if camera.isStreamingEnabled():
+					result += ', "' + StateData.Properties[12] + '":' + any2str(camera.getStreamingPort())
+					result += ', "' + StateData.Properties[13] + '":' + any2str(camera.getStreamingSleep())
 				result += ', "' + StateData.Properties[3] + '":"' + ('On' if camera.isMotionDetectionEnabled() else 'Off') + '"'
 				if camera.isMotionDetectionEnabled():
 					result += ', "' + StateData.Properties[7] + '":"' + ('On' if camera.getMotionDetectionContour() else 'Off') + '"'
 					result += ', "' + StateData.Properties[10] + '":' + any2str(camera.getMotionDetectionThreshold())
-					result += ', "' + StateData.Properties[8] + '":"' + ('On' if camera.getMotionDetectionRecording() else 'Off') + '"'
-					result += ', "' + StateData.Properties[9] + '":"' + any2str(camera.getMotionRecordingFormat()) + '"'
-					result += ', "' + StateData.Properties[11] + '":"' + any2str(camera.getMotionRecordingLocation()) + '"'
+				result += ', "' + StateData.Properties[8] + '":"' + ('On' if camera.isRecordingEnabled() else 'Off') + '"'
+				if camera.isRecordingEnabled():
+					result += ', "' + StateData.Properties[9] + '":"' + any2str(camera.getRecordingFormat()) + '"'
+					result += ', "' + StateData.Properties[11] + '":"' + any2str(camera.getRecordingLocation()) + '"'
 				result += '}'
 				index += 1
 			result += ']'
@@ -832,16 +1001,10 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 					camera = self.getCameras()[key]
 					# Evaluate CameraStreaming property
 					if camprop.lower() == StateData.Properties[2].lower():
-						if any2bool(camdata):
-							camera.setStreamingOn()
-						else:
-							camera.setStreamingOff()
+						camera.setStreaming(any2bool(camdata))
 					# Evaluate CameraMotionDetection property
 					elif camprop.lower() == StateData.Properties[3].lower():
-						if any2bool(camdata):
-							camera.setMotionOn()
-						else:
-							camera.setMotionOff()
+						camera.setMotionDetection(any2bool(camdata))
 					# Evaluate CameraResolution property
 					elif camprop.lower() == StateData.Properties[4].lower():
 						camera.setCameraResolution(any2str(camdata))
@@ -857,15 +1020,15 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 					# Evaluate MotionDetectionThreshold property
 					elif camprop.lower() == StateData.Properties[10].lower():
 						camera.setMotionDetectionThreshold(any2int(camdata))
-					# Evaluate MotionDetectionRecording property
+					# Evaluate CameraRecording property
 					elif camprop.lower() == StateData.Properties[8].lower():
-						camera.setMotionDetectionRecording(any2bool(camdata))
-					# Evaluate MotionRecordingFormat property
+						camera.setRecording(any2bool(camdata))
+					# Evaluate RecordingFormat property
 					elif camprop.lower() == StateData.Properties[9].lower():
-						camera.setMotionRecordingFormat(any2str(camdata))
-					# Evaluate MotionRecordingLocation property
+						camera.setRecordingFormat(any2str(camdata))
+					# Evaluate RecordingLocation property
 					elif camprop.lower() == StateData.Properties[11].lower():
-						camera.setMotionRecordingLocation(any2str(camdata))
+						camera.setRecordingLocation(any2str(camdata))
 					# Evaluate StreamingPort property
 					elif camprop.lower() == StateData.Properties[12].lower():
 						camera.setStreamingPort(any2int(camdata))
@@ -1018,34 +1181,34 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 										result["set-properties"].append(jsonout["result"]["property"])
 								else:
 									msg += ('. ' + str(jsonout["message"]))
-							# MotionDetectionRecording
-							if not service.get("MotionDetectionRecording") or (service.get("MotionDetectionRecording") and service["MotionDetectionRecording"] == "default") or (service.get("MotionDetectionRecording") and any2bool(service["MotionDetectionRecording"])):
-								if service.get("MotionDetectionRecording") and any2bool(service["MotionDetectionRecording"]):
-									jsonout = json.loads(self.runPropertySet(CameraId, "MotionDetectionRecording", service["MotionDetectionRecording"]))
+							# CameraRecording
+							if not service.get("CameraRecording") or (service.get("CameraRecording") and service["CameraRecording"] == "default") or (service.get("CameraRecording") and any2bool(service["CameraRecording"])):
+								if service.get("CameraRecording") and any2bool(service["CameraRecording"]):
+									jsonout = json.loads(self.runPropertySet(CameraId, "CameraRecording", service["CameraRecording"]))
 									if jsonout["achieved"]:
 										if result["set-properties"].count(jsonout["result"]["property"]) == 0:
 											result["set-properties"].append(jsonout["result"]["property"])
 									else:
 										msg += ('. ' + str(jsonout["message"]))
-								# MotionRecordingFormat
-								if service.get("MotionRecordingFormat") and service["MotionRecordingFormat"] != "default":
-									jsonout = json.loads(self.runPropertySet(CameraId, "MotionRecordingFormat", service["MotionRecordingFormat"]))
+								# RecordingFormat
+								if service.get("RecordingFormat") and service["RecordingFormat"] != "default":
+									jsonout = json.loads(self.runPropertySet(CameraId, "RecordingFormat", service["RecordingFormat"]))
 									if jsonout["achieved"]:
 										if result["set-properties"].count(jsonout["result"]["property"]) == 0:
 											result["set-properties"].append(jsonout["result"]["property"])
 									else:
 										msg += ('. ' + str(jsonout["message"]))
-								# MotionRecordingLocation
-								if service.get("MotionRecordingLocation") and service["MotionRecordingLocation"] != "default":
-									jsonout = json.loads(self.runPropertySet(CameraId, "MotionRecordingLocation", service["MotionRecordingLocation"]))
+								# RecordingLocation
+								if service.get("RecordingLocation") and service["RecordingLocation"] != "default":
+									jsonout = json.loads(self.runPropertySet(CameraId, "RecordingLocation", service["RecordingLocation"]))
 									if jsonout["achieved"]:
 										if result["set-properties"].count(jsonout["result"]["property"]) == 0:
 											result["set-properties"].append(jsonout["result"]["property"])
 									else:
 										msg += ('. ' + str(jsonout["message"]))
-							elif service.get("MotionDetectionRecording") and not any2bool(service["MotionDetectionRecording"]):
+							elif service.get("CameraRecording") and not any2bool(service["CameraRecording"]):
 								if not CameraStarted:
-									jsonout = json.loads(self.runPropertySet(CameraId, "MotionDetectionRecording", service["MotionDetectionRecording"]))
+									jsonout = json.loads(self.runPropertySet(CameraId, "CameraRecording", service["CameraRecording"]))
 									if jsonout["achieved"]:
 										if result["set-properties"].count(jsonout["result"]["property"]) == 0:
 											result["set-properties"].append(jsonout["result"]["property"])
@@ -1110,70 +1273,6 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 			msg = tomsg(["Error saving server configuration in file " + path + ": ", stderr])[1]
 		# Aggregate JSON output
 		return self._answer(StateData.Actions[10], StateData.Subjects[0], achieved, msg, result)
-
-
-# Class: StreamHandler
-class StreamHandler(BaseHTTPRequestHandler):
-	# Constructor
-	def __init__(self, request, client_address, server):
-		self._server = server
-		BaseHTTPRequestHandler.__init__(self, request, client_address, server)
-
-	# Method: do_GET
-	def do_GET(self):
-		try:
-			self.send_response(200)
-			self.send_header("Connection", "close")
-			self.send_header("Max-Age", "0")
-			self.send_header("Expires", "0")
-			self.send_header("Cache-Control", "no-cache, private")
-			self.send_header("Pragma", "no-cache")
-			self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=--BOUNDARYSTRING")
-			self.end_headers()
-			while True:
-				if self._server.getFrame() is None:
-					continue
-				JpegData = cv.EncodeImage(".jpeg", self._server.getFrame(), (cv.CV_IMWRITE_JPEG_QUALITY, 75)).tostring()
-				self.wfile.write("--BOUNDARYSTRING\r\n")
-				self.send_header("Content-type", "image/jpeg")
-				self.send_header("Content-Length", str(len(JpegData)))
-				self.end_headers()
-				self.wfile.write(JpegData)
-				self.wfile.write("\r\n")
-				time.sleep(self._server.getSleep())
-			return
-		except BaseException as baseerr:
-			self.send_error(500, 'PiCam Streaming Server Error: \r\n\r\n%s' % str(baseerr))
-			if __verbose__:
-				traceback.print_exc()
-
-
-# Class: StreamServer
-class StreamServer(ThreadingMixIn, HTTPServer):
-	allow_reuse_address = True
-	daemon_threads = True
-
-	# Constructor
-	def __init__(self, server_address, handler, bind_and_activate=True, frame=None, sleep=0.05):
-		HTTPServer.__init__(self, server_address, handler, bind_and_activate=bind_and_activate)
-		self._frame = frame
-		self._sleep = sleep
-
-	# Method: getFrame
-	def getFrame(self):
-		return self._frame
-
-	# Method: getFrame
-	def setFrame(self, frame):
-		self._frame = frame
-
-	# Method: getTimesleep
-	def getSleep(self):
-		return self._sleep
-
-	# Method: setTimesleep
-	def setSleep(self, sleeptime):
-		self._sleep = sleeptime
 
 
 # Class: PiCamClient
@@ -1334,7 +1433,7 @@ class PiCamClient:
 			text = "Status of " + answer["result"]["project"] + " " + answer["result"]["module"] + " " + answer["result"]["version"]
 			text += '\n\t> server: ' + answer["result"]["host"] + ":" + any2str(answer["result"]["port"])
 			for service in answer["result"]["services"]:
-				text += '\n\t> Service: #' + any2str(service[StateData.Properties[0]])
+				text += '\n\t> service: #' + any2str(service[StateData.Properties[0]])
 				# Main Properties
 				text += '\n\t\t| CameraResolution: ' + ('default' if service["CameraResolution"] is None else any2str(service["CameraResolution"]))
 				text += '\n\t\t| CameraFramerate: ' + any2str(service["CameraFramerate"])
@@ -1352,12 +1451,12 @@ class PiCamClient:
 					text += '\n\t\t\t|| MotionDetectionContour: ' + ('On' if service["MotionDetectionContour"] else 'Off')
 					text += '\n\t\t\t|| MotionDetectionThreshold: ' + any2str(service["MotionDetectionThreshold"])
 					# Recording
-					if service.get("MotionDetectionRecording") and any2bool(service["MotionDetectionRecording"]):
-						text += '\n\t\t\t|| MotionDetectionRecording: On'
-						text += '\n\t\t\t\t||| MotionRecordingFormat: ' + any2str(service["MotionRecordingFormat"])
-						text += '\n\t\t\t\t||| MotionRecordingLocation: ' + any2str(service["MotionRecordingLocation"])
-					elif service.get("MotionDetectionRecording") and not any2bool(service["MotionDetectionRecording"]):
-						text += '\n\t\t\t|| MotionDetectionRecording: Off'
+					if service.get("CameraRecording") and any2bool(service["CameraRecording"]):
+						text += '\n\t\t\t|| CameraRecording: On'
+						text += '\n\t\t\t\t||| RecordingFormat: ' + any2str(service["RecordingFormat"])
+						text += '\n\t\t\t\t||| RecordingLocation: ' + any2str(service["RecordingLocation"])
+					elif service.get("CameraRecording") and not any2bool(service["CameraRecording"]):
+						text += '\n\t\t\t|| CameraRecording: Off'
 				elif service.get("CameraMotionDetection") and not any2bool(service["CameraMotionDetection"]):
 					text += '\n\t\t| CameraMotionDetection: Off'
 			return text
@@ -1430,16 +1529,16 @@ class PiCamClient:
 								if service.get("MotionDetectionThreshold") and service["MotionDetectionThreshold"] != "default":
 									content.append("set property MotionDetectionThreshold=" + any2str(service["MotionDetectionThreshold"]) + CameraId)
 								# Check motion detection recording option
-								if not service.get("MotionDetectionRecording") or (service.get("MotionDetectionRecording") and service["MotionDetectionRecording"] == "default") or (service.get("MotionDetectionRecording") and any2bool(service["MotionDetectionRecording"])):
-									if service.get("MotionDetectionRecording") and any2bool(service["MotionDetectionRecording"]):
-										content.append("enable property MotionDetectionRecording" + CameraId)
-									if service.get("MotionRecordingFormat") and service["MotionRecordingFormat"] != "default":
-										content.append("set property MotionRecordingFormat=" + any2str(service["MotionRecordingFormat"]) + CameraId)
-									if service.get("MotionRecordingLocation") and service["MotionRecordingLocation"] != "default":
-										content.append("set property MotionRecordingLocation=" + any2str(service["MotionRecordingLocation"]) + CameraId)
-								elif service.get("MotionDetectionRecording") and not any2bool(service["MotionDetectionRecording"]):
+								if not service.get("CameraRecording") or (service.get("CameraRecording") and service["CameraRecording"] == "default") or (service.get("CameraRecording") and any2bool(service["CameraRecording"])):
+									if service.get("CameraRecording") and any2bool(service["CameraRecording"]):
+										content.append("enable property CameraRecording" + CameraId)
+									if service.get("RecordingFormat") and service["RecordingFormat"] != "default":
+										content.append("set property RecordingFormat=" + any2str(service["RecordingFormat"]) + CameraId)
+									if service.get("RecordingLocation") and service["RecordingLocation"] != "default":
+										content.append("set property RecordingLocation=" + any2str(service["RecordingLocation"]) + CameraId)
+								elif service.get("CameraRecording") and not any2bool(service["CameraRecording"]):
 									if not CameraStarted:
-										content.append("disable property MotionDetectionRecording" + CameraId)
+										content.append("disable property CameraRecording" + CameraId)
 							elif service.get("CameraMotionDetection") and not any2bool(service["CameraMotionDetection"]):
 								if not CameraStarted:
 									content.append("disable property CameraMotionDetection" + CameraId)
@@ -1460,8 +1559,8 @@ class StateData:
 	Actions = ['init', 'shutdown', 'start', 'stop', 'set', 'enable', 'disable', 'status', 'echo', 'load', 'save']
 	Subjects = ['server', 'service', 'property']
 	Properties = ['CameraId', 'CameraStatus', 'CameraStreaming', 'CameraMotionDetection', 'CameraResolution', 'CameraFramerate',
-				  'CameraSleeptime', 'MotionDetectionContour', 'MotionDetectionRecording', 'MotionRecordingFormat', 'MotionDetectionThreshold',
-				  'MotionRecordingLocation', 'StreamingPort', 'StreamingSleeptime']
+				  'CameraSleeptime', 'MotionDetectionContour', 'CameraRecording', 'RecordingFormat', 'MotionDetectionThreshold',
+				  'RecordingLocation', 'StreamingPort', 'StreamingSleeptime']
 	Articles = ['@', 'at', 'on', 'in', 'to', 'from']
 
 	# Constructor
