@@ -24,7 +24,7 @@ case "$1" in
 		if [ -f /opt/clue/etc/picam.cfg ]; then
 			/opt/clue/bin/picam -f /opt/clue/etc/picam.cfg &
 		else
-			/opt/clue/bin/picam init server
+			/opt/clue/bin/picam init server &
 		fi
 		log_end_msg $?
 		;;
