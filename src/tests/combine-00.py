@@ -26,9 +26,9 @@ class MyHandler(BaseHTTPRequestHandler):
 			self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=--BOUNDARYSTRING")
 			self.end_headers()			
 			while True:
-				if self._server.getFrame() is None:
+				if self._server.getData() is None:
 					continue
-				JpegData = cv.EncodeImage(".jpeg", self._server.getFrame(), (cv.CV_IMWRITE_JPEG_QUALITY,75)).tostring()
+				JpegData = cv.EncodeImage(".jpeg", self._server.getData(), (cv.CV_IMWRITE_JPEG_QUALITY,75)).tostring()
 				
 				self.wfile.write("--BOUNDARYSTRING\r\n")
 				self.send_header("Content-type", "image/jpeg")

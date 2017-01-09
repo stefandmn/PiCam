@@ -21,6 +21,7 @@ import getopt
 import datetime
 import threading
 import traceback
+import subprocess
 from PIL import Image
 from picamera import PiCamera
 from SocketServer import ThreadingMixIn, BaseRequestHandler, TCPServer
@@ -54,8 +55,7 @@ class Camera(threading.Thread):
 		self._framerate = None
 		# Initialize class private variables
 		self._exec = False
-		self._lock = True
-		self._frame = None
+		self._lock = False
 		# Define tools
 		self._camera = None
 		self._motion = CamMotion(self)
@@ -72,80 +72,10 @@ class Camera(threading.Thread):
 			self._stream.start()
 		self.log("Service has been initialized")
 
-	# Method: getId
-	def getId(self):
+	# Property: id
+	@property
+	def id(self):
 		return self._id
-
-	# Method: getFrame
-	def getFrame(self):
-		return self._frame
-
-	# Method: setFrame
-	def setFrame(self):
-		if not self._lock and self._camera is not None:
-			if isinstance(self._camera, PiCamera):
-				byte_buffer = io.BytesIO()
-				self._camera.capture(byte_buffer, format='jpeg', use_video_port=True)
-				byte_buffer.seek(0)
-				pil = Image.open(byte_buffer)
-				self._frame = cv.CreateImageHeader(self._camera.resolution, cv.IPL_DEPTH_8U, 3)
-				cv.SetData(self._frame, pil.tostring())
-				cv.CvtColor(self._frame, self._frame, cv.CV_RGB2BGR)
-			else:
-				self._frame = cv.QueryFrame(self._camera)
-			cv.PutText(self._frame, "CAM " + str(self.getId()).rjust(2, '0'), (5, 15), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .35, .35, 0.0, 1, cv.CV_AA), (255, 255, 255))
-
-	# Method: stop
-	def stop(self):
-		self._exec = False
-		# Stop motion detection
-		if self.isMotionDetectionEnabled():
-			self.setMotionDetection(False)
-		# Stop motion detection
-		if self.isRecordingEnabled():
-			self.setRecording(False)
-		# Stop streaming
-		if self.isStreamingEnabled():
-			self.setStreaming(False)
-		# Stop camera
-		self.setCameraOff()
-		# Stop this thread
-		self._stop.set()
-		self.log("Service has been stopped")
-
-	# Method: stopped
-	def stopped(self):
-		return self._stop.isSet()
-
-	# Method: log
-	def log(self, data):
-		type, message = tomsg(data)
-		if message != '':
-			print "%s | %s %s > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), type, self.name, message)
-
-	# Method: start
-	def run(self):
-		self._exec = True
-		# Run surveillance workflow
-		while self._exec:
-			try:
-				# Capture next frame
-				self.setFrame()
-				# If motion detection feature is active run it to detect motion
-				if self.isMotionDetectionEnabled():
-					self._motion.run(self._frame)
-				# If recording feature is active run it to record images or videos
-				if self.isRecordingEnabled():
-					self._record.run(self._frame)
-				# If the streaming is active send the picture through the streaming channel
-				if self.isStreamingEnabled():
-					self._stream.run(self._frame)
-				# Sleep for couple of seconds or milliseconds
-				if self._sleeptime > 0:
-					time.sleep(self._sleeptime)
-			except BaseException as baserr:
-				self.log(["Camera workflow failed:", baserr])
-				self.stop()
 
 	# Method: isCameraOn
 	def isCameraOn(self):
@@ -154,8 +84,9 @@ class Camera(threading.Thread):
 	# Method: setCameraOn
 	def setCameraOn(self):
 		if self._camera is None:
+			self._sync()
+			self._lock = True
 			try:
-				self._lock = True
 				if self._id == 0:
 					self._camera = PiCamera()
 					if self._resolution is not None:
@@ -169,9 +100,10 @@ class Camera(threading.Thread):
 						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_HEIGHT, self._resolution[1])
 					if self._framerate is not None:
 						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FPS, self._framerate)
-				self._lock = False
 			except BaseException as baseerr:
+				self._camera = None
 				self.log(["Camera service initialization failed:", baseerr])
+			self._lock = False
 		else:
 			self.log("Camera service is already started")
 
@@ -182,8 +114,9 @@ class Camera(threading.Thread):
 	# Method: setCameraOff
 	def setCameraOff(self):
 		if self._camera is not None:
+			self._sync()
+			self._lock = True
 			try:
-				self._lock = True
 				# For PiCamera call close method
 				if isinstance(self._camera, PiCamera):
 					self._camera.close()
@@ -191,18 +124,105 @@ class Camera(threading.Thread):
 				del self._camera
 				self._camera = None
 			except BaseException as baseerr:
-				self.log(["Camera service has been stopped with errors:", baseerr])
 				self._camera = None
+				self.log(["Camera service has been stopped with errors:", baseerr])
+			self._lock = False
 		else:
 			self.log("Camera service is already stopped")
 
+	# Method: sync
+	def _sync(self):
+		# Wait until locking will disappear
+		while self._lock:
+			if self._sleeptime > 0:
+				time.sleep(self._sleeptime)
+			else:
+				time.sleep(Camera.Sleeptime)
+
+	# Property: frame
+	@property
+	def frame(self):
+		if self.isCameraOn():
+			# Create new frame based on camera type
+			try:
+				if isinstance(self._camera, PiCamera):
+					byte_buffer = io.BytesIO()
+					self._camera.capture(byte_buffer, format='jpeg', use_video_port=True)
+					byte_buffer.seek(0)
+					pil = Image.open(byte_buffer)
+					frame = cv.CreateImageHeader(self._camera.resolution, cv.IPL_DEPTH_8U, 3)
+					cv.SetData(frame, pil.tostring())
+					cv.CvtColor(frame, frame, cv.CV_RGB2BGR)
+				else:
+					frame = cv.QueryFrame(self._camera)
+				cv.PutText(frame, "CAM " + str(self.id).rjust(2, '0'), (5, 15), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .35, .35, 0.0, 1, cv.CV_AA), (255, 255, 255))
+			except:
+				frame = None
+			return frame
+		else:
+			return None
+
+	# Method: stop
+	def stop(self):
+		self._exec = False
+		# Stop streaming
+		if self.isStreamingEnabled():
+			self.setStreaming(False)
+		# Stop recording
+		if self.isRecordingEnabled():
+			self.setRecording(False)
+		# Stop motion detection
+		if self.isMotionDetectionEnabled():
+			self.setMotionDetection(False)
+		# Stop camera
+		self.setCameraOff()
+		# Stop this thread
+		self._stop.set()
+		self.log("Service has been stopped")
+
+	# Method: stopped
+	def stopped(self):
+		return self._stop.isSet()
+
+	# Method: start
+	def run(self):
+		self._exec = True
+		# Run surveillance workflow
+		while self._exec:
+			try:
+				# Capture next frame
+				frame = self.frame
+				# Process current frame
+				if self.frame is not None:
+					# If motion detection feature is active run it to detect motion
+					if self.isMotionDetectionEnabled():
+						self._motion.run(frame)
+					# If recording feature is active run it to record images or videos
+					if self.isRecordingEnabled():
+						self._record.run(frame)
+					# If the streaming is active send the picture through the streaming channel
+					if self.isStreamingEnabled():
+						self._stream.run(frame)
+				# Sleep for couple of seconds or milliseconds
+				if self._sleeptime > 0:
+					time.sleep(self._sleeptime)
+			except BaseException as baserr:
+				self.log(["Camera workflow failed:", baserr])
+				self.stop()
+
+	# Method: log
+	def log(self, data):
+		type, message = tomsg(data)
+		if message != '':
+			print "%s | %s %s > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), type, self.name, message)
+
 	# Method: setCameraResolution
 	def setCameraResolution(self, resolution):
-		if self._camera is not None and resolution is not None:
+		if self.isCameraOn() and resolution is not None:
+			self._sync()
+			self._lock = True
+
 			try:
-				self._lock = True
-				# Wait 1 second for the usecase when the resolution is set in the same time with the camera start
-				time.sleep(1)
 				# Set value
 				if resolution.find(",") > 0:
 					self._resolution = (int(resolution.split(',')[0].strip()), int(resolution.split(',')[1].strip()))
@@ -216,9 +236,9 @@ class Camera(threading.Thread):
 				else:
 					cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_WIDTH, self._resolution[0])
 					cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_HEIGHT, self._resolution[1])
-				self._lock = False
 			except BaseException as baseerr:
 				self.log(["Applying camera resolution failed:", baseerr])
+			self._lock = False
 
 	# Method: getCameraResolution
 	def getCameraResolution(self):
@@ -226,9 +246,10 @@ class Camera(threading.Thread):
 
 	# Method: setCameraFramerate
 	def setCameraFramerate(self, framerate):
-		if self._camera is not None and framerate is not None:
+		if self.isCameraOn() and framerate is not None:
+			self._sync()
+			self._lock = True
 			try:
-				self._lock = True
 				# Set value
 				self._framerate = framerate
 				# Configure camera
@@ -236,9 +257,9 @@ class Camera(threading.Thread):
 					self._camera.framerate = self._framerate
 				else:
 					cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FPS, self._framerate)
-				self._lock = False
 			except BaseException as baseerr:
 				self.log(["Applying camera framerate failed:", baseerr])
+			self._lock = False
 
 	# Method: getCameraFramerate
 	def getCameraFramerate(self):
@@ -290,6 +311,7 @@ class Camera(threading.Thread):
 	# Method: setCameraRecording
 	def setRecording(self, flag):
 		if not self.isRecordingEnabled() and flag:
+			self._sync()
 			self._record.start()
 		elif self.isRecordingEnabled() and not flag:
 			self._record.stop()
@@ -339,10 +361,6 @@ class Camera(threading.Thread):
 	# Method: isRecordingSkipped
 	def isRecordingSkipped(self):
 		return self._record.isSkipped()
-
-	# Method: setRecordingReset
-	def setRecordingReset(self):
-		self._record.reset()
 
 	# Method: isStreamingEnabled
 	def isStreamingEnabled(self):
@@ -511,22 +529,24 @@ class CamMotion(CamFunction):
 				_diff = self._absdiff(self.__gray, _gray)
 				_move = self._compute(_diff)
 				_area = self._area(_move, frame)
+				self.__gray = _gray
 				# Evaluation
 				if self._camera.isRecordingEnabled():
 					if _area > self.getThreshold():
 						self.__ismot = True
-						self.__fkmot = 0
-						if self._camera.isRecordingSkipped():
-							self._camera.setRecordingReset()
+						self.__fkmot = datetime.datetime.now()
+						self._camera.setRecordingSkipped(False)
 						self._camera.setRecordingMessage("Motion Detection")
-					elif self.__ismot:
-						self.__fkmot += 1
-						if self.__fkmot > 59:
-							if not self._camera.isRecordingSkipped():
-								self._camera.setRecordingSkipped(True)
+					elif _area <= self.getThreshold() and self.__ismot:
+						self.__fkmot = datetime.datetime.now() if self.__fkmot is None else self.__fkmot
+						if (datetime.datetime.now() - self.__fkmot).total_seconds() > 10:
+							self._camera.setRecordingSkipped(True)
 							self.__ismot = False
-							self.__fkmot = 0
-				self.__gray = _gray
+							self.__fkmot = None
+					else:
+						self._camera.setRecordingSkipped(True)
+						self.__ismot = False
+						self.__fkmot = None
 
 
 # Class: CamRecording
@@ -534,11 +554,26 @@ class CamRecording(CamFunction):
 	# Constructor
 	def __init__(self, camera, start=False):
 		CamFunction.__init__(self, camera, start=start)
-		self._format = 'image'
+		self._format = 'video'
 		self._location = '/tmp'
 		self.__skip = False
 		self.__text = None
 		self.__vref = None
+		self.__dinf = None
+		self.__vfps = 2
+		self.__vfsz = 325
+		self.__ifsz = 400
+
+	# Method: start
+	def start(self):
+		# Run calibration
+		self.calibration()
+		# Activate service
+		CamFunction.start(self)
+		# Start disk watchdog
+		diskinfothread = threading.Thread(target=self.checkstorage)
+		diskinfothread.daemon = True
+		diskinfothread.start()
 
 	# Method: getFormat
 	def getFormat(self):
@@ -562,44 +597,109 @@ class CamRecording(CamFunction):
 
 	# Method: setMessage
 	def setMessage(self, text):
-		self._text = text
+		self.__text = text
 
 	# Method: setSkip
 	def setSkip(self, skip):
-		self._skip = skip
+		self.__skip = skip
 
 	# Method: isSkipped
 	def isSkipped(self):
-		return self._skip
+		return self.__skip
 
 	# Method: run
 	def run(self, frame):
+		# Validate file system availability
+		if self._format == 'video':
+			if self.__dinf is not None and 15 * self.__vfsz >= int(self.__dinf["available"]) and not self.__skip:
+				self.__skip = True
+				self.log("Recording is skipped because " + str(self.__dinf["mountpoint"]) + " file system is almost full (" + str(self.__dinf["percent"]) + ")")
+		elif self._format == 'image':
+			if self.__dinf is not None and 900 * self.__vfps * self.__ifsz >= int(self.__dinf["available"]) and not self.__skip:
+				self.__skip = True
+				self.log("Recording is skipped because " + str(self.__dinf["mountpoint"]) + " file system is almost full (" + str(self.__dinf["percent"]) + ")")
+		# Run recording workflow
 		if not self.__skip and self._running:
+			# Validate recording message
+			if self.__text is None:
+				self.__text = "Recording"
 			try:
+				# Get the frame close
 				clone = cv.CloneImage(frame)
+				# Set recording message and add it to the frame
 				message = self.__text + " @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
 				cv.PutText(clone, message, (10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .32, .32, 0.0, 1, cv.CV_AA), (255, 255, 255))
+				# Save the frame as image or as video frame
 				if self._format == 'image':
-					filename = self._location + os.path.sep + "cam" + str(self._camera.getId()).rjust(2, '0')
+					filename = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
 					filename += "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
 					filename += ".png"
 					cv.SaveImage(filename, clone)
 				elif self._format == 'video':
-					if self._vref is not None:
-						cv.WriteFrame(self._vref, clone)
+					if self.__vref is not None:
+						cv.WriteFrame(self.__vref, clone)
 					else:
-						filename = self._location + os.path.sep + "cam" + str(self._camera.getId()).rjust(2, '0')
+						filename = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
 						filename += "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".avi"
-						self._vref = cv.CreateVideoWriter(filename, cv.CV_FOURCC('M', 'J', 'P', 'G'), 2, cv.GetSize(frame), True)
+						self.__vref = cv.CreateVideoWriter(filename, cv.CV_FOURCC('M', 'J', 'P', 'G'), self.__vfps, cv.GetSize(frame), True)
 			except IOError as ioerr:
 				self.log(["Recording function failed:", ioerr])
 				self.stop()
 
-	# Method: reset
-	def reset(self):
-		self.__vref = None
-		self.__text = None
-		self.__skip = False
+	# Method: calibration
+	def calibration(self):
+		index = 0
+		nopbs = 31
+		vref = None
+		ifile = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0') + "-calibration-sample.png"
+		vfile = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0') + "-calibration-sample.avi"
+		# Start probing
+		start = datetime.datetime.now()
+		while index < nopbs:
+			frame = self._camera.frame
+			if frame is not None:
+				# Get frame and handle it for recording
+				clone = cv.CloneImage(frame)
+				message = "Recording @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
+				cv.PutText(clone, message, (10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .32, .32, 0.0, 1, cv.CV_AA), (255, 255, 255))
+				if index == 0:
+					# Write image sample
+					cv.SaveImage(ifile, clone)
+				else:
+					# Write video sample
+					if vref is None:
+						vref = cv.CreateVideoWriter(vfile, cv.CV_FOURCC('M', 'J', 'P', 'G'), self.__vfps, cv.GetSize(frame), True)
+					else:
+						cv.WriteFrame(vref, clone)
+				index += 1
+		# End probing
+		stop = datetime.datetime.now()
+		self.__ifsz = os.path.getsize(ifile) / 1024
+		self.__vfsz = os.path.getsize(vfile) / 1024
+		os.remove(ifile)
+		os.remove(vfile)
+		self.__vfps = int((nopbs - 1) / (stop - start).total_seconds())
+		self.__vfps = 2 if self.__vfps < 2 else self.__vfps
+		self.__ifsz = round(self.__ifsz, 2)
+		self.__vfsz = round(self.__vfsz * 60 / (stop - start).total_seconds(), 2)
+		self.__dinf = self.diskinfo(self._location)
+		self.log("Calibration: video frames per second = " + str(self.__vfps) + ", image frame size = " + str(self.__ifsz) + "K, video frame size = " + str(self.__vfsz) + "K/min, file system usage = " + str(self.__dinf["percent"]))
+
+	# Method: storagecheck
+	def checkstorage(self):
+		while self._running and self._camera.isCameraOn:
+			self.__dinf = self.diskinfo(self._location)
+			time.sleep(300)
+
+	# Method: diskinfo
+	def diskinfo(self, file):
+		try:
+			df = subprocess.Popen(["df", file], stdout=subprocess.PIPE)
+			output = df.communicate()[0]
+			device, size, used, available, percent, mountpoint = output.split("\n")[1].split()
+			return {"device":device, "size":size, "used":used, "available":available, "percent":percent, "mountpoint":mountpoint}
+		except:
+			return None
 
 
 # Class: CamStreaming
@@ -661,7 +761,7 @@ class CamStreaming(CamFunction):
 	def run(self, frame):
 		if self._stream is not None and self._running:
 			try:
-				self._stream.setFrame(frame)
+				self._stream.setData(frame)
 			except IOError as ioerr:
 				self.log(["Sending streaming data failed:", ioerr])
 
@@ -685,9 +785,9 @@ class StreamHandler(BaseHTTPRequestHandler):
 			self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=--BOUNDARYSTRING")
 			self.end_headers()
 			while True:
-				if self._server.getFrame() is None:
+				if self._server.getData() is None:
 					continue
-				JpegData = cv.EncodeImage(".jpeg", self._server.getFrame(), (cv.CV_IMWRITE_JPEG_QUALITY, 75)).tostring()
+				JpegData = cv.EncodeImage(".jpeg", self._server.getData(), (cv.CV_IMWRITE_JPEG_QUALITY, 75)).tostring()
 				self.wfile.write("--BOUNDARYSTRING\r\n")
 				self.send_header("Content-type", "image/jpeg")
 				self.send_header("Content-Length", str(len(JpegData)))
@@ -714,11 +814,11 @@ class StreamingServer(ThreadingMixIn, HTTPServer):
 		self._sleep = sleep
 
 	# Method: getFrame
-	def getFrame(self):
+	def getData(self):
 		return self._frame
 
 	# Method: getFrame
-	def setFrame(self, frame):
+	def setData(self, frame):
 		self._frame = frame
 
 	# Method: getSleep
@@ -909,7 +1009,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 					result += '{'
 				else:
 					result += ', {'
-				result += '"' + StateData.Properties[0] + '":' + any2str(camera.getId())
+				result += '"' + StateData.Properties[0] + '":' + any2str(camera.id)
 				# CameraStatus
 				result += ', "' + StateData.Properties[1] + '":"On"'
 				# CameraResolution
@@ -957,7 +1057,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 			else:
 				try:
 					camera = Camera(key)
-					camera.setStreamingPort(self.server_address[1] + 1 + camera.getId())
+					camera.setStreamingPort(self.server_address[1] + 1 + camera.id)
 					camera.start()
 					self.getCameras()[key] = camera
 					msg = "Camera " + key + " has been started"
