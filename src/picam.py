@@ -238,7 +238,6 @@ class Camera(threading.Thread):
 		if self.isCameraOn() and resolution is not None:
 			self._sync()
 			self._lock = True
-
 			try:
 				# Set value
 				if resolution.find(",") > 0:
@@ -275,7 +274,7 @@ class Camera(threading.Thread):
 				else:
 					cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FPS, self._framerate)
 			except BaseException as baseerr:
-				self.log(["Failed apply camera framerate:", baseerr])
+				self.log(["Failed to apply camera framerate:", baseerr])
 			self._lock = False
 
 	# Method: getCameraFramerate
@@ -353,9 +352,8 @@ class Camera(threading.Thread):
 	# Method: setRecordingFormat
 	def setRecordingFormat(self, format):
 		if self.isRecordingEnabled():
-			self._record.stop()
+			self._record.calibrate()
 			self._record.setFormat(format)
-			self._record.start()
 		else:
 			self._record.setFormat(format)
 
@@ -563,24 +561,55 @@ class CamRecording(CamFunction):
 		CamFunction.__init__(self, camera, start=start)
 		self._format = 'video'
 		self._location = '/tmp'
+		# Flag for motion detection suspend and resume functions and also to stop recording when resources are not enough
 		self.__skip = False
+		# Calibration flag
+		self.__clbr = False
+		# Calibration start date/time
+		self.__cdat = None
+		# Calibration counter
+		self.__ccnt = 0
+		# Recording message
 		self.__text = None
+		# Recording references: file name and file handler
 		self.__vref = None
-		self.__dinf = None
-		self.__vfps = 2
-		self.__vfsz = 325
-		self.__ifsz = 400
+		self.__fref = None
+		#
+		self.__rinf = None
+		self.__freq = 2
+		self.__size = 325
+		self.__nerr = 0
+		self.__vfrm = 0
 
 	# Method: start
 	def start(self):
 		# Run calibration
-		self.calibration()
+		self.calibrate()
 		# Activate service
 		CamFunction.start(self)
 		# Start disk watchdog
-		diskinfothread = threading.Thread(target=self.checkstorage)
-		diskinfothread.daemon = True
-		diskinfothread.start()
+		resthread = threading.Thread(target=self.chkres)
+		resthread.daemon = True
+		resthread.start()
+
+	# Method: stop
+	def stop(self):
+		if self.__vref is not None:
+			del self.__vref
+			self.__vref = None
+
+	# Method: calibration
+	def calibrate(self):
+		self.__clbr = True
+		self.__ccnt = 0
+		self.__cdat = datetime.datetime.now()
+		self.__freq = 2
+		self.__size = 0
+		self.__skip = False
+		self.__vref = None
+		self.__fref = None
+		self.__nerr = 0
+		self.__vfrm = 0
 
 	# Method: getFormat
 	def getFormat(self):
@@ -617,16 +646,25 @@ class CamRecording(CamFunction):
 	# Method: run
 	def run(self, frame):
 		# Validate file system availability
-		if self._format == 'video':
-			if self.__dinf is not None and 15 * self.__vfsz >= int(self.__dinf["available"]) and not self.__skip:
-				self.__skip = True
-				self._camera.log("Recording is skipped because " + str(self.__dinf["mountpoint"]) + " file system is almost full (" + str(self.__dinf["percent"]) + ")", "WARN")
-		elif self._format == 'image':
-			if self.__dinf is not None and 900 * self.__vfps * self.__ifsz >= int(self.__dinf["available"]) and not self.__skip:
-				self.__skip = True
-				self._camera.log("Recording is skipped because " + str(self.__dinf["mountpoint"]) + " file system is almost full (" + str(self.__dinf["percent"]) + ")", "WARN")
+		if not self.__skip and not self.__clbr:
+			if self._format == 'video':
+				if self.__rinf is not None and self.__rinf["disk"] is not None and (300 * self.__size >= int(self.__rinf["disk"]["available"])):
+					self.__skip = True
+					self._camera.log("Recording is temporary stopped because " + str(self.__rinf["disk"]["mountpoint"]) + " file system will become full in around 5 minutes", "WARN")
+			elif self._format == 'image':
+				if self.__rinf is not None and self.__rinf["disk"] is not None and (300 * self.__size >= int(self.__rinf["disk"]["available"])):
+					self.__skip = True
+					self._camera.log("Recording is temporary stopped because " + str(self.__rinf["disk"]["mountpoint"]) + " file system will become full in around 5 minutes", "WARN")
 		# Run recording workflow
 		if not self.__skip and self._running:
+			# Define file name for calibration samples
+			if self.__clbr:
+				if self._format == 'image':
+					self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
+					self.__fref += "-calibration-sample.png"
+				elif self._format == 'video':
+					self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
+					self.__fref += "-calibration-sample.avi"
 			# Validate recording message
 			if self.__text is None:
 				self.__text = "Recording"
@@ -636,77 +674,67 @@ class CamRecording(CamFunction):
 				# Set recording message and add it to the frame
 				message = self.__text + " @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
 				cv.PutText(clone, message, (10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .32, .32, 0.0, 1, cv.CV_AA), (255, 255, 255))
-				# Save the frame as image or as video frame
+				# Define the name of image file
 				if self._format == 'image':
-					filename = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
-					filename += "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-					filename += ".png"
-					cv.SaveImage(filename, clone)
+					if not self.__clbr:
+						self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
+						self.__fref += "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+						self.__fref += ".png"
+					# Write/Save image file on the file system
+					cv.SaveImage(self.__fref, clone)
+					# Calculate calibration data
+					if self.__clbr:
+						self.__ccnt += 1
+						self.__size += os.path.getsize(self.__fref) / 1024
 				elif self._format == 'video':
-					if self.__vref is not None:
+					# Define the name of video file
+					if not self.__clbr and not os.path.isfile(self.__fref):
+						self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
+						self.__fref += "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".avi"
+					# Write/Save video file on the file system
+					if self.__vref is not None and os.path.isfile(self.__fref):
 						cv.WriteFrame(self.__vref, clone)
+						self.__vfrm += 1
 					else:
-						filename = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
-						filename += "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".avi"
-						self.__vref = cv.CreateVideoWriter(filename, cv.CV_FOURCC('M', 'J', 'P', 'G'), self.__vfps, cv.GetSize(frame), True)
+						if self.__vref is not None:
+							del self.__vref
+							self.__vref = None
+						self.__vref = cv.CreateVideoWriter(self.__fref, cv.CV_FOURCC('M', 'J', 'P', 'G'), self.__freq, cv.GetSize(frame), True)
+						self.__vfrm = 1
+					# Calculate calibration data
+					if self.__clbr:
+						self.__ccnt += 1
+						self.__size = os.path.getsize(self.__fref) / 1024
+				del clone
+				self.__nerr = 0
 			except IOError as ioerr:
-				self._camera.log(["Recording function failed:", ioerr])
-				self.stop()
-
-	# Method: calibration
-	def calibration(self):
-		index = 0
-		nopbs = 31
-		vref = None
-		ifile = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0') + "-calibration-sample.png"
-		vfile = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0') + "-calibration-sample.avi"
-		# Start probing
-		start = datetime.datetime.now()
-		while index < nopbs:
-			frame = self._camera.frame
-			if frame is not None:
-				# Get frame and handle it for recording
-				clone = cv.CloneImage(frame)
-				message = "Recording @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
-				cv.PutText(clone, message, (10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .32, .32, 0.0, 1, cv.CV_AA), (255, 255, 255))
-				if index == 0:
-					# Write image sample
-					cv.SaveImage(ifile, clone)
+				self.__nerr += 1
+				if self.__nerr >= 5:
+					self._camera.log(["Recording function failed:", ioerr])
+					self.stop()
 				else:
-					# Write video sample
-					if vref is None:
-						vref = cv.CreateVideoWriter(vfile, cv.CV_FOURCC('M', 'J', 'P', 'G'), self.__vfps, cv.GetSize(frame), True)
-					else:
-						cv.WriteFrame(vref, clone)
-				index += 1
-		# End probing
-		stop = datetime.datetime.now()
-		self.__ifsz = os.path.getsize(ifile) / 1024
-		self.__vfsz = os.path.getsize(vfile) / 1024
-		os.remove(ifile)
-		os.remove(vfile)
-		self.__vfps = int((nopbs - 1) / (stop - start).total_seconds())
-		self.__vfps = 2 if self.__vfps < 2 else self.__vfps
-		self.__ifsz = round(self.__ifsz, 2)
-		self.__vfsz = round(self.__vfsz * 60 / (stop - start).total_seconds(), 2)
-		self.__dinf = self.diskinfo(self._location)
-		self._camera.log("Calibration process: video frames per second = " + str(self.__vfps) + ", image frame size = " + str(self.__ifsz) + "K, video frame size = " + str(self.__vfsz) + "K/min, file system usage = " + str(self.__dinf["percent"]))
+					self._camera.log(["Error in Recording workflow:", ioerr])
+			# Evaluate calibration samples
+			if self.__clbr:
+				if (datetime.datetime.now() - self.__cdat).total_seconds() > 30:
+					# Calculate frequence
+					self.__freq = int(self.__ccnt / (datetime.datetime.now() - self.__cdat).total_seconds())
+					# Remove sample file
+					os.remove(self.__fref)
+					#  Calculate sample size
+					if self._format == 'image':
+						self.__size /= self.__ccnt
+					elif self._format == 'video':
+						self.__size /= (datetime.datetime.now() - self.__cdat).total_seconds()
+					self._camera.log("Calibration process: frames per second = " + str(self.__freq) + ", frame size = " + str(self.__size) + "K, file system usage = " + str(self.__rinf["disk"]["percent"]))
+					self.__clbr = False
+					self.__vref = None
 
-	# Method: storagecheck
-	def checkstorage(self):
+	# Method: chkres
+	def chkres(self):
 		while self._running and self._camera.isCameraOn:
-			self.__dinf = self.diskinfo(self._location)
+			self.__rinf = {"disk":diskinfo(self._location), "cpu":cputempinfo(), "memory":memoryinfo()}
 			time.sleep(300)
-
-	# Method: diskinfo
-	def diskinfo(self, file):
-		try:
-			df = subprocess.Popen(["df", file], stdout=subprocess.PIPE)
-			output = df.communicate()[0]
-			device, size, used, available, percent, mountpoint = output.split("\n")[1].split()
-			return {"device":device, "size":size, "used":used, "available":available, "percent":percent, "mountpoint":mountpoint}
-		except:
-			return None
 
 
 # Class: CamStreaming
@@ -941,8 +969,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 		self._logger = logger('Server', False)
 		# Server is initiated
 		self._running = True
-		self.log("===================================================================")
-		self.log("===================================================================")
+		self.log("============================================================================")
 		self.log(__project__ + " " + __module__ + " Server has been initialized")
 
 	# Method _answer
@@ -1018,7 +1045,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 
 	# Method: runActionEcho
 	def runServerEcho(self):
-		result = '"{"project":"' + __project__ + '", "module":"' + __module__ + '", "version":"' + __version__ + '", "license":"' + __license__ + '", "copyright":"' + __copyright__ + '"}'
+		result = '{"project":"' + __project__ + '", "module":"' + __module__ + '", "version":"' + __version__ + '", "license":"' + __license__ + '", "copyright":"' + __copyright__ + '"}'
 		# Log execution output
 		self.log("Calling [Server Echo]", 'DEBUG')
 		# Aggregate JSON output
@@ -1488,12 +1515,12 @@ class PiCamClient:
 		try:
 			data = StateData(command)
 		except BaseException as baserr:
-			errordata = ["Command translation failed:", baserr]
+			errordata = tomsg(["Command translation failed:", baserr], logger=self._logger)[1]
 			if not self._api:
 				self.log(errordata)
 				sys.exit(1)
 			else:
-				self._apiData.append('{"action":"unknown", "subject": "unknown", "achieved":false, "message":' + tomsg(errordata)[1])
+				self._apiData.append('{"action":"unknown", "subject": "unknown", "achieved":false, "message":' + errordata)
 				return self._apiData
 		# Check if input command ask to start server instance
 		if data.action == StateData.Actions[0] and data.subject == StateData.Subjects[0]:
@@ -1510,7 +1537,7 @@ class PiCamClient:
 				else:
 					data = None
 			except BaseException as baserr:
-				errordata = ["Failed to start server:", baserr]
+				errordata = tomsg(["Failed to start server:", baserr], logger=self._logger)[1]
 				self.log(errordata)
 				server = None
 				data = None
@@ -1558,11 +1585,11 @@ class PiCamClient:
 						break
 				client.close()
 			except BaseException as baserr:
-				errordata = ["Command failed:", baserr]
+				errordata = tomsg(["Command failed:", baserr], logger=self._logger)[1]
 				if not self._api:
 					self.log(errordata)
 				else:
-					self._apiData.append('{"action":"' + data.action + '", "subject":"' + data.subject + '", "achieved":false, "message":' + tomsg(errordata)[1])
+					self._apiData.append('{"action":"' + data.action + '", "subject":"' + data.subject + '", "achieved":false, "message":' + errordata)
 			finally:
 				# Check if the current command is linked by other command
 				if data.hasLinkedData():
@@ -1968,22 +1995,55 @@ def any2str(v):
 
 # Function: logger
 def logger(name, console=True):
-	_log = logging.getLogger(name)
+	log = logging.getLogger(name)
 	if console:
-		_handler = logging.StreamHandler()
+		handler = logging.StreamHandler()
 	else:
-		_handler = logging.FileHandler('/var/log/picam.log')
+		handler = logging.FileHandler('/var/log/picam.log')
 	if __verbose__:
-		_log.setLevel(logging.DEBUG)
-		_handler.setLevel(logging.DEBUG)
+		log.setLevel(logging.DEBUG)
+		handler.setLevel(logging.DEBUG)
 	else:
-		_log.setLevel(logging.INFO)
-		_handler.setLevel(logging.INFO)
-	_formater = logging.Formatter('%(asctime)s | %(levelno)s %(name)s > %(message)s')
-	_formater.datefmt = '%Y%m%d%H%M%S'
-	_handler.setFormatter(_formater)
-	_log.addHandler(_handler)
-	return _log
+		log.setLevel(logging.INFO)
+		handler.setLevel(logging.INFO)
+	formater = logging.Formatter('%(asctime)s | %(levelno)s %(name)s > %(message)s')
+	formater.datefmt = '%Y%m%d%H%M%S'
+	handler.setFormatter(formater)
+	log.addHandler(handler)
+	return log
+
+
+# Function: diskinfo
+def diskinfo( file):
+	try:
+		df = subprocess.Popen(["df", file], stdout=subprocess.PIPE)
+		output = df.communicate()[0]
+		device, size, used, available, percent, mountpoint = output.split("\n")[1].split()
+		return {"device":device, "size":size, "used":used, "available":available, "percent":percent, "mountpoint":mountpoint}
+	except:
+		return None
+
+
+# Function: memoryinfo
+def memoryinfo():
+	try:
+		df = subprocess.Popen(["free", file], stdout=subprocess.PIPE)
+		output = df.communicate()[0]
+		total, used, free = output.split("\n")[1].split()[1:4]
+		return {"total":total, "used":used, "free":free}
+	except:
+		return None
+
+
+# Function: cputempinfo
+def cputempinfo():
+	try:
+		df = subprocess.Popen(["vcgencmd measure_temp", file], stdout=subprocess.PIPE)
+		output = df.communicate()[0]
+		temperature = output.replace("temp=","").replace("'C\n","")
+		return {"temperature":temperature}
+	except:
+		return None
 
 
 # Function: log
@@ -2003,6 +2063,7 @@ def tomsg(data, level=None, logger=None):
 			if __verbose__ or logger is not None:
 				if logger is not None:
 					logger.exception(obj)
+					traceback.print_exc()
 				else:
 					traceback.print_exc()
 			# Take exception details to be described in log message
