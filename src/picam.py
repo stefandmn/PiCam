@@ -574,11 +574,15 @@ class CamRecording(CamFunction):
 		# Recording references: file name and file handler
 		self.__vref = None
 		self.__fref = None
-		#
+		# Resources info: disk, cpu, memry
 		self.__rinf = None
+		# Detected frame frequency (image or video)
 		self.__freq = 2
+		# Detected frame size (image or video)
 		self.__size = 325
+		# No of consecutive errors
 		self.__nerr = 0
+		# No of frames included into a video file
 		self.__vfrm = 0
 
 	# Method: start
@@ -718,15 +722,20 @@ class CamRecording(CamFunction):
 			if self.__clbr:
 				if (datetime.datetime.now() - self.__cdat).total_seconds() > 30:
 					# Calculate frequence
-					self.__freq = int(self.__ccnt / (datetime.datetime.now() - self.__cdat).total_seconds())
+					self.__freq = int(round(self.__ccnt / (datetime.datetime.now() - self.__cdat).total_seconds(), 0))
 					# Remove sample file
 					os.remove(self.__fref)
 					#  Calculate sample size
 					if self._format == 'image':
-						self.__size /= self.__ccnt
+						self.__size = round(self.__size / self.__ccnt, 2)
 					elif self._format == 'video':
-						self.__size /= (datetime.datetime.now() - self.__cdat).total_seconds()
-					self._camera.log("Calibration process: frames per second = " + str(self.__freq) + ", frame size = " + str(self.__size) + "K, file system usage = " + str(self.__rinf["disk"]["percent"]))
+						self.__size = round(self.__size / (datetime.datetime.now() - self.__cdat).total_seconds(), 2)
+					self._camera.log("Calibration process: frames per second = " + str(self.__freq) +
+									 ", frame size = " + str(self.__size) +
+									 "K, file system usage = " + str(self.__rinf["disk"]["percent"]) +
+									 "%, available memory = " + str(self.__rinf["memory"]["free"]) +
+									 "K, cpu temperature = " + str(self.__rinf["cpu"]["temp"]) +
+									 "'C")
 					self.__clbr = False
 					self.__vref = None
 
@@ -2018,8 +2027,8 @@ def diskinfo( file):
 	try:
 		df = subprocess.Popen(["df", file], stdout=subprocess.PIPE)
 		output = df.communicate()[0]
-		device, size, used, available, percent, mountpoint = output.split("\n")[1].split()
-		return {"device":device, "size":size, "used":used, "available":available, "percent":percent, "mountpoint":mountpoint}
+		data = output.split("\n")[1].split()
+		return {"device":any2str(data[0]), "size":any2int(data[1]), "used":any2int(data[2]), "available":any2int(data[3]), "percent":any2int(filter(str.isdigit, data[4])), "mountpoint":any2str(data[5])}
 	except:
 		return None
 
@@ -2027,10 +2036,13 @@ def diskinfo( file):
 # Function: memoryinfo
 def memoryinfo():
 	try:
-		df = subprocess.Popen(["free", file], stdout=subprocess.PIPE)
+		df = subprocess.Popen(["free"], stdout=subprocess.PIPE)
 		output = df.communicate()[0]
-		total, used, free = output.split("\n")[1].split()[1:4]
-		return {"total":total, "used":used, "free":free}
+		data = output.split("\n")[1].split()
+		total = any2int(data[1])
+		free = any2int(data[3]) + any2int(data[5]) + any2int(data[6])
+		used = any2int(total) - any2int(free)
+		return {"total":any2int(total), "used":used, "free":free}
 	except:
 		return None
 
@@ -2038,10 +2050,10 @@ def memoryinfo():
 # Function: cputempinfo
 def cputempinfo():
 	try:
-		df = subprocess.Popen(["vcgencmd measure_temp", file], stdout=subprocess.PIPE)
+		df = subprocess.Popen(["vcgencmd", "measure_temp"], stdout=subprocess.PIPE)
 		output = df.communicate()[0]
-		temperature = output.replace("temp=","").replace("'C\n","")
-		return {"temperature":temperature}
+		data = output.split("=")[1].replace("'C", "")
+		return {"temp":any2float(data)}
 	except:
 		return None
 

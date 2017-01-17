@@ -86,12 +86,18 @@ Below are described the common use-cases for **PiCam** usage:
 > picam init server
 > picam -c "server init"
 > picam --command="server init"
+> picam -f /tmp/startup.json"
+> picam --file=/tmp/startup.json"
+> picam --file=/tmp/startup.cfg"
 ```
 
-2. Load server configuration
+2. Load server configuration (when the file is not specify it will load the configuration from /opt/clue/etc/picam.cfg)
 ```shell
+> picam server load
 > picam server load from /tmp/startup.json
+> picam -c "server load"
 > picam -c "server load from /tmp/startup.json"
+> picam -c "server load from /tmp/startup.cfg"
 ```
 
 3. Start first USB camera
@@ -118,8 +124,10 @@ Below are described the common use-cases for **PiCam** usage:
 > picam -c "disable property CameraStreaming on #1" -h 192.168.1.100
 ```
 
-7. Save server configuration
+7. Save server configuration (when the file is not specify it will save the configuration in /opt/clue/etc/picam.cfg)
 ```shell
+> picam save server
+> picam -c "save server"
 > picam server save in /tmp/startup.json
 > picam -c "save server in /tmp/startup.json"
 > picam -c "save server in /tmp/startup.json" -h 10.10.10.100
