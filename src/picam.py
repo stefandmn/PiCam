@@ -679,7 +679,6 @@ class CamRecording(CamFunction):
 			if self.__text is None:
 				self.__text = "Recording"
 			try:
-				1/0
 				# Get the frame close
 				clone = cv.CloneImage(frame)
 				# Set recording message and add it to the frame
