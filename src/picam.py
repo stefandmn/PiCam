@@ -94,6 +94,7 @@ class Camera(threading.Thread):
 			try:
 				if self._id == 0:
 					self._camera = PiCamera()
+					self._camera.led = False
 					if self._resolution is not None:
 						self._camera.resolution = self._resolution
 					if self._framerate is not None:
@@ -217,7 +218,7 @@ class Camera(threading.Thread):
 
 	# Method: log
 	def log(self, data, type=None):
-		level, message = tomsg(data)
+		level, message = tomsg(data, level=type, logger=self._logger)
 		if type is None:
 			type = level
 		if message != '':
@@ -598,9 +599,14 @@ class CamRecording(CamFunction):
 
 	# Method: stop
 	def stop(self):
+		# Reset video reference
 		if self.__vref is not None:
 			del self.__vref
 			self.__vref = None
+		# Reset file reference
+		self.__fref = None
+		# Activate service
+		CamFunction.stop(self)
 
 	# Method: calibration
 	def calibrate(self):
@@ -673,6 +679,7 @@ class CamRecording(CamFunction):
 			if self.__text is None:
 				self.__text = "Recording"
 			try:
+				1/0
 				# Get the frame close
 				clone = cv.CloneImage(frame)
 				# Set recording message and add it to the frame
@@ -703,7 +710,7 @@ class CamRecording(CamFunction):
 						if self.__vref is not None:
 							del self.__vref
 							self.__vref = None
-						self.__vref = cv.CreateVideoWriter(self.__fref, cv.CV_FOURCC('M', 'J', 'P', 'G'), self.__freq, cv.GetSize(frame), True)
+						self.__vref = cv.CreateVideoWriter(self.__fref, cv.CV_FOURCC('M', 'P', '4', 'V'), self.__freq, cv.GetSize(frame), True)
 						self.__vfrm = 1
 					# Calculate calibration data
 					if self.__clbr:
@@ -711,15 +718,15 @@ class CamRecording(CamFunction):
 						self.__size = os.path.getsize(self.__fref) / 1024
 				del clone
 				self.__nerr = 0
-			except IOError as ioerr:
+			except BaseException as baserr:
 				self.__nerr += 1
-				if self.__nerr >= 5:
-					self._camera.log(["Recording function failed:", ioerr])
+				if self.__nerr >= 5 or self.__clbr:
+					self._camera.log(["Recording function failed:", baserr])
 					self.stop()
 				else:
-					self._camera.log(["Error in Recording workflow:", ioerr])
+					self._camera.log(["Error in recording workflow:", baserr])
 			# Evaluate calibration samples
-			if self.__clbr:
+			if self.__clbr and self.isRunning():
 				if (datetime.datetime.now() - self.__cdat).total_seconds() > 30:
 					# Calculate frequence
 					self.__freq = int(round(self.__ccnt / (datetime.datetime.now() - self.__cdat).total_seconds(), 0))
@@ -733,7 +740,7 @@ class CamRecording(CamFunction):
 					self._camera.log("Calibration process: frames per second = " + str(self.__freq) +
 									 ", frame size = " + str(self.__size) +
 									 "K, file system usage = " + str(self.__rinf["disk"]["percent"]) +
-									 "%, available memory = " + str(self.__rinf["memory"]["free"]) +
+									 "%, available memory = " + str(self.__rinf["memory"]["available"]) +
 									 "K, cpu temperature = " + str(self.__rinf["cpu"]["temp"]) +
 									 "'C")
 					self.__clbr = False
@@ -743,6 +750,7 @@ class CamRecording(CamFunction):
 	def chkres(self):
 		while self._running and self._camera.isCameraOn:
 			self.__rinf = {"disk":diskinfo(self._location), "cpu":cputempinfo(), "memory":memoryinfo()}
+			self._camera.log("Regular feedback: movie frames = " + str(self.__vfrm) + ", resources info = " + json.dumps(self.__rinf))
 			time.sleep(300)
 
 
@@ -997,7 +1005,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 
 	# Method: log
 	def log(self, data, type=None):
-		level, message = tomsg(data)
+		level, message = tomsg(data, level=type, logger=self._logger)
 		if type is None:
 			type = level
 		# Send message to the standard output or to the server log file
@@ -1633,7 +1641,7 @@ class PiCamClient:
 
 	# Method: log
 	def log(self, data, type=None):
-		level, message = tomsg(data, type)
+		level, message = tomsg(data, level=type, logger=self._logger)
 		if type is None:
 			type = level
 		# Evaluate message and type
@@ -2036,13 +2044,16 @@ def diskinfo( file):
 # Function: memoryinfo
 def memoryinfo():
 	try:
-		df = subprocess.Popen(["free"], stdout=subprocess.PIPE)
-		output = df.communicate()[0]
-		data = output.split("\n")[1].split()
+		p1 = subprocess.Popen(["cat", "/proc/meminfo"], stdout=subprocess.PIPE)
+		p2 = subprocess.Popen(["grep", "Mem"], stdin=p1.stdout, stdout=subprocess.PIPE)
+		p1.stdout.close()
+		output = p2.communicate()[0]
+		data = output.split("\n")[0].split()
 		total = any2int(data[1])
-		free = any2int(data[3]) + any2int(data[5]) + any2int(data[6])
-		used = any2int(total) - any2int(free)
-		return {"total":any2int(total), "used":used, "free":free}
+		data = output.split("\n")[2].split()
+		available = any2int(data[1])
+		used = any2int(total) - any2int(available)
+		return {"total":any2int(total), "used":used, "available":available}
 	except:
 		return None
 
@@ -2074,8 +2085,7 @@ def tomsg(data, level=None, logger=None):
 			# When verbose is activated print out the stacktrace
 			if __verbose__ or logger is not None:
 				if logger is not None:
-					logger.exception(obj)
-					traceback.print_exc()
+					logger.exception("Exception:")
 				else:
 					traceback.print_exc()
 			# Take exception details to be described in log message
