@@ -212,6 +212,8 @@ class Camera(threading.Thread):
 				# Sleep for couple of seconds or milliseconds
 				if self._sleeptime > 0:
 					time.sleep(self._sleeptime)
+				# Release the captured frame
+				del frame
 			except BaseException as baserr:
 				self.log(["Camera workflow failed:", baserr])
 				self.stop()
@@ -368,11 +370,11 @@ class Camera(threading.Thread):
 
 	# Method: setRecordingSkip
 	def setRecordingSkipped(self, skip):
-		self._record.setSkip(skip)
+		self._record.setPaused(skip)
 
 	# Method: isRecordingSkipped
 	def isRecordingSkipped(self):
-		return self._record.isSkipped()
+		return self._record.isPaused()
 
 	# Method: isStreamingEnabled
 	def isStreamingEnabled(self):
@@ -443,6 +445,10 @@ class CamFunction:
 			return self._running
 		else:
 			return False
+
+	# Method: isNotRunning
+	def isNotRunning(self):
+		return not self.isRunning()
 
 	# Method: run
 	def run(self, frame):
@@ -563,19 +569,19 @@ class CamRecording(CamFunction):
 		self._format = 'video'
 		self._location = '/tmp'
 		# Flag for motion detection suspend and resume functions and also to stop recording when resources are not enough
-		self.__skip = False
+		self.__wfps = False
+		# Flag that identifies if the system received an alert from resource monitors (memory, processor, disk, etc.)
+		self.__alrt = False
 		# Calibration flag
 		self.__clbr = False
 		# Calibration start date/time
-		self.__cdat = None
-		# Calibration counter
-		self.__ccnt = 0
+		self.__cldt = None
 		# Recording message
 		self.__text = None
 		# Recording references: file name and file handler
-		self.__vref = None
+		self.__oref = None
 		self.__fref = None
-		# Resources info: disk, cpu, memry
+		# Resources info: disk, cpu, memory
 		self.__rinf = None
 		# Detected frame frequency (image or video)
 		self.__freq = 2
@@ -584,7 +590,7 @@ class CamRecording(CamFunction):
 		# No of consecutive errors
 		self.__nerr = 0
 		# No of frames included into a video file
-		self.__vfrm = 0
+		self.__nfrm = 0
 
 	# Method: start
 	def start(self):
@@ -593,33 +599,36 @@ class CamRecording(CamFunction):
 		# Activate service
 		CamFunction.start(self)
 		# Start disk watchdog
-		resthread = threading.Thread(target=self.chkres)
-		resthread.daemon = True
-		resthread.start()
+		self.resthread = threading.Thread(target=self.checkResources)
+		self.resthread.daemon = True
+		self.resthread.start()
 
 	# Method: stop
 	def stop(self):
 		# Reset video reference
-		if self.__vref is not None:
-			del self.__vref
-			self.__vref = None
+		if self.__oref is not None:
+			del self.__oref
+			self.__oref = None
 		# Reset file reference
 		self.__fref = None
 		# Activate service
 		CamFunction.stop(self)
+		# Stop check resources thread
+		self.resthread.terminate()
+		self.resthread = None
 
 	# Method: calibration
 	def calibrate(self):
 		self.__clbr = True
-		self.__ccnt = 0
-		self.__cdat = datetime.datetime.now()
+		self.__cldt = datetime.datetime.now()
 		self.__freq = 2
 		self.__size = 0
-		self.__skip = False
-		self.__vref = None
+		self.__wfps = False
+		self.__alrt = False
+		self.__oref = None
 		self.__fref = None
 		self.__nerr = 0
-		self.__vfrm = 0
+		self.__nfrm = 0
 
 	# Method: getFormat
 	def getFormat(self):
@@ -645,112 +654,128 @@ class CamRecording(CamFunction):
 	def setMessage(self, text):
 		self.__text = text
 
-	# Method: setSkip
-	def setSkip(self, skip):
-		self.__skip = skip
+	# Method: setPaused
+	def setPaused(self, pause):
+		self.__wfps = pause
 
-	# Method: isSkipped
-	def isSkipped(self):
-		return self.__skip
+	# Method: isPaused
+	def isPaused(self):
+		return self.__wfps
 
 	# Method: run
 	def run(self, frame):
-		# Validate file system availability
-		if not self.__skip and not self.__clbr:
-			if self._format == 'video':
-				if self.__rinf is not None and self.__rinf["disk"] is not None and (300 * self.__size >= int(self.__rinf["disk"]["available"])):
-					self.__skip = True
-					self._camera.log("Recording is temporary stopped because " + str(self.__rinf["disk"]["mountpoint"]) + " file system will become full in around 5 minutes", "WARN")
-			elif self._format == 'image':
-				if self.__rinf is not None and self.__rinf["disk"] is not None and (300 * self.__size >= int(self.__rinf["disk"]["available"])):
-					self.__skip = True
-					self._camera.log("Recording is temporary stopped because " + str(self.__rinf["disk"]["mountpoint"]) + " file system will become full in around 5 minutes", "WARN")
 		# Run recording workflow
-		if not self.__skip and self._running:
-			# Define file name for calibration samples
+		if self.isPaused() or self.isNotRunning() or self.__alrt:
+			return
+		# Define file name for calibration samples
+		if self.__clbr:
+			if self._format == 'image':
+				self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
+				self.__fref += "-calibration-sample.png"
+			elif self._format == 'video':
+				self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
+				self.__fref += "-calibration-sample.avi"
+		# Validate recording message
+		if self.__text is None:
 			if self.__clbr:
-				if self._format == 'image':
-					self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
-					self.__fref += "-calibration-sample.png"
-				elif self._format == 'video':
-					self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
-					self.__fref += "-calibration-sample.avi"
-			# Validate recording message
-			if self.__text is None:
+				self.__text = "Calibrating"
+			else:
 				self.__text = "Recording"
-			try:
-				# Get the frame close
-				clone = cv.CloneImage(frame)
-				# Set recording message and add it to the frame
-				message = self.__text + " @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
-				cv.PutText(clone, message, (10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .32, .32, 0.0, 1, cv.CV_AA), (255, 255, 255))
-				# Define the name of image file
-				if self._format == 'image':
-					if not self.__clbr:
-						self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
-						self.__fref += "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-						self.__fref += ".png"
-					# Write/Save image file on the file system
-					cv.SaveImage(self.__fref, clone)
-					# Calculate calibration data
-					if self.__clbr:
-						self.__ccnt += 1
-						self.__size += os.path.getsize(self.__fref) / 1024
-				elif self._format == 'video':
-					# Define the name of video file
-					if not self.__clbr and not os.path.isfile(self.__fref):
+		# Recording and calibration workflow
+		try:
+			# Get the frame close
+			clone = cv.CloneImage(frame)
+			# Set recording message and add it to the frame
+			message = self.__text + " @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
+			cv.PutText(clone, message, (10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .32, .32, 0.0, 1, cv.CV_AA), (255, 255, 255))
+			# Define the name of image file
+			if self._format == 'image':
+				if not self.__clbr:
+					self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
+					self.__fref += "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+					self.__fref += ".png"
+				# Write/Save image file on the file system
+				cv.SaveImage(self.__fref, clone)
+				# Calculate aggregated calibration samples size
+				if self.__clbr:
+					self.__size += os.path.getsize(self.__fref) / 1024
+			elif self._format == 'video':
+				if not self.__clbr:
+					# If the file reach the maximum number of frames reset the name
+					if self.__nfrm >= 12000:
+						self.__fref = None
+						self.__nfrm = 0
+					# Define video file name
+					if self.__fref is None:
 						self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
 						self.__fref += "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".avi"
-					# Write/Save video file on the file system
-					if self.__vref is not None and os.path.isfile(self.__fref):
-						cv.WriteFrame(self.__vref, clone)
-						self.__vfrm += 1
-					else:
-						if self.__vref is not None:
-							del self.__vref
-							self.__vref = None
-						self.__vref = cv.CreateVideoWriter(self.__fref, cv.CV_FOURCC('M', 'P', '4', 'V'), self.__freq, cv.GetSize(frame), True)
-						self.__vfrm = 1
-					# Calculate calibration data
-					if self.__clbr:
-						self.__ccnt += 1
-						self.__size = os.path.getsize(self.__fref) / 1024
-				del clone
-				self.__nerr = 0
-			except BaseException as baserr:
-				self.__nerr += 1
-				if self.__nerr >= 5 or self.__clbr:
-					self._camera.log(["Recording function failed:", baserr])
-					self.stop()
+					# Validate the video references: file and pointer
+					if not os.path.isfile(self.__fref) and self.__oref is not None:
+						del self.__oref
+						self.__oref = None
+				# Write/Save video file on the file system
+				if self.__oref is not None:
+					cv.WriteFrame(self.__oref, clone)
+					self.__nfrm += 1
 				else:
-					self._camera.log(["Error in recording workflow:", baserr])
-			# Evaluate calibration samples
-			if self.__clbr and self.isRunning():
-				if (datetime.datetime.now() - self.__cdat).total_seconds() > 30:
-					# Calculate frequence
-					self.__freq = int(round(self.__ccnt / (datetime.datetime.now() - self.__cdat).total_seconds(), 0))
-					# Remove sample file
-					os.remove(self.__fref)
-					#  Calculate sample size
-					if self._format == 'image':
-						self.__size = round(self.__size / self.__ccnt, 2)
-					elif self._format == 'video':
-						self.__size = round(self.__size / (datetime.datetime.now() - self.__cdat).total_seconds(), 2)
-					self._camera.log("Calibration process: frames per second = " + str(self.__freq) +
-									 ", frame size = " + str(self.__size) +
-									 "K, file system usage = " + str(self.__rinf["disk"]["percent"]) +
-									 "%, available memory = " + str(self.__rinf["memory"]["available"]) +
-									 "K, cpu temperature = " + str(self.__rinf["cpu"]["temp"]) +
-									 "'C")
-					self.__clbr = False
-					self.__vref = None
+					self.__oref = cv.CreateVideoWriter(self.__fref, cv.CV_FOURCC('M', 'P', '4', 'V'), self.__freq, cv.GetSize(frame), True)
+					self.__nfrm = 1
+				# Calculate calibration sample size
+				if self.__clbr:
+					self.__size = os.path.getsize(self.__fref) / 1024
+			# Delete the frame copy used for recording
+			del clone
+			# Reset the errors counter detected during recording
+			self.__nerr = 0
+		except BaseException as baserr:
+			self.__nerr += 1
+			if self.__nerr >= 5 or self.__clbr:
+				self._camera.log(["Recording function failed:", baserr])
+				self.stop()
+			else:
+				self._camera.log(["Error in recording workflow:", baserr])
+		# Evaluate calibration process when it ends
+		if self.__clbr and (datetime.datetime.now() - self.__cldt).total_seconds() > 20:
+			# Calculate frequency
+			self.__freq = int(round(self.__nfrm / (datetime.datetime.now() - self.__cldt).total_seconds(), 0))
+			# Remove sample file
+			os.remove(self.__fref)
+			self.__fref = None
+			#  Calculate sample size
+			if self._format == 'image':
+				self.__size = round(self.__size / self.__nfrm, 2)
+			elif self._format == 'video':
+				del self.__oref
+				self.__oref = None
+				self.__size = round(self.__size / (datetime.datetime.now() - self.__cldt).total_seconds(), 2)
+			self._camera.log("Calibration process detected the following system and workflow parameters: " +
+							 "frame rate = " + str(self.__freq) +
+							 ", frame size = " + str(self.__size) +
+							 "K, file system usage = " + str(self.__rinf["disk"]["percent"]) +
+							 "%, available memory = " + str(self.__rinf["memory"]["available"]) +
+							 "K, cpu temperature = " + str(self.__rinf["cpu"]["temp"]) +
+							 "'C")
+			self.__clbr = False
 
-	# Method: chkres
-	def chkres(self):
-		while self._running and self._camera.isCameraOn:
+	# Method: checkResources
+	def checkResources(self):
+		self._camera.log("Start a new thread to check system resources", "DEBUG")
+		while self.isRunning():
+			# Get system resources
 			self.__rinf = {"disk":diskinfo(self._location), "cpu":cputempinfo(), "memory":memoryinfo()}
-			self._camera.log("Regular feedback: movie frames = " + str(self.__vfrm) + ", resources info = " + json.dumps(self.__rinf))
+			if self.__rinf["disk"] is not None and (300 * self.__size >= int(self.__rinf["disk"]["available"])):
+				self.__alrt = True
+				self._camera.log("Recording workflow is temporary stopped because '" + str(self.__rinf["disk"]["mountpoint"]) + "' file system will is almost full (it has " + str(self.__rinf["disk"]["available"]) + "KB available space)", "WARN")
+			elif self.__rinf["cpu"] is not None and int(self.__rinf["cpu"]["temp"]) >= 80:
+				self.__alrt = True
+				self._camera.log("Recording workflow is temporary stopped because the processor temperature is too high (it has " + str(self.__rinf["cpu"]["temp"]) + "'C)", "WARN")
+			else:
+				if self.__alrt:
+					self._camera.log("Recording workflow might be resumed due to resources availability: " + json.dumps(self.__rinf), "DEBUG")
+				self.__alrt = False
+			# Wait for next 5 minutes
 			time.sleep(300)
+		self._camera.log("Stop the thread used to check system resources", "DEBUG")
 
 
 # Class: CamStreaming
@@ -2032,8 +2057,8 @@ def logger(name, console=True):
 # Function: diskinfo
 def diskinfo( file):
 	try:
-		df = subprocess.Popen(["df", file], stdout=subprocess.PIPE)
-		output = df.communicate()[0]
+		p1 = subprocess.Popen(["df", file], stdout=subprocess.PIPE)
+		output = p1.communicate()[0]
 		data = output.split("\n")[1].split()
 		return {"device":any2str(data[0]), "size":any2int(data[1]), "used":any2int(data[2]), "available":any2int(data[3]), "percent":any2int(filter(str.isdigit, data[4])), "mountpoint":any2str(data[5])}
 	except:
@@ -2060,8 +2085,8 @@ def memoryinfo():
 # Function: cputempinfo
 def cputempinfo():
 	try:
-		df = subprocess.Popen(["vcgencmd", "measure_temp"], stdout=subprocess.PIPE)
-		output = df.communicate()[0]
+		p1 = subprocess.Popen(["vcgencmd", "measure_temp"], stdout=subprocess.PIPE)
+		output = p1.communicate()[0]
 		data = output.split("=")[1].replace("'C", "")
 		return {"temp":any2float(data)}
 	except:
