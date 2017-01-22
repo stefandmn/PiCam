@@ -47,6 +47,8 @@ class Camera(threading.Thread):
 			id = int(filter(str.isdigit, id))
 		if id is None or not isinstance(id, int) or id < 0:
 			raise RuntimeError('Invalid camera identifier: ' + id)
+		if not checkcamera(id):
+			raise RuntimeError('Camera #' + str(id) + ' is not installed')
 		# Initialize threading options
 		threading.Thread.__init__(self)
 		self.name = "Camera #" + str(id)
@@ -566,7 +568,7 @@ class CamRecording(CamFunction):
 	# Constructor
 	def __init__(self, camera, start=False):
 		CamFunction.__init__(self, camera, start=start)
-		self._format = 'video'
+		self._format = 'image'
 		self._location = '/tmp'
 		# Flag for motion detection suspend and resume functions and also to stop recording when resources are not enough
 		self.__wfps = False
@@ -611,7 +613,9 @@ class CamRecording(CamFunction):
 			self.__oref = None
 		# Reset file reference
 		self.__fref = None
-		# Activate service
+		# Close video (if is activated)
+		self._closevideo()
+		# Deactivate service
 		CamFunction.stop(self)
 		# Stop check resources thread
 		self.resthread.terminate()
@@ -662,6 +666,29 @@ class CamRecording(CamFunction):
 	def isPaused(self):
 		return self.__wfps
 
+	# Method: _initvideo
+	def _initvideo(self, frame):
+		self._closevideo()
+		self.__nfrm = 0
+		self.__oref = cv.CreateVideoWriter(self.__fref, cv.CV_FOURCC('M', 'P', '4', '2'), self.__freq, cv.GetSize(frame), True)
+		self._writevideo(frame)
+
+	# Method: _writevideo
+	def _writevideo(self, frame):
+		cv.WriteFrame(self.__oref, frame)
+		self.__nfrm += 1
+
+	# Method: _closevideo
+	def _closevideo(self):
+		if self.__oref is not None:
+			del self.__oref
+			self.__oref = None
+
+	# Method: _writeimage
+	def _writeimage(self, frame):
+		cv.SaveImage(self.__fref, frame)
+		self.__nfrm += 1
+
 	# Method: run
 	def run(self, frame):
 		# Run recording workflow
@@ -695,7 +722,7 @@ class CamRecording(CamFunction):
 					self.__fref += "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
 					self.__fref += ".png"
 				# Write/Save image file on the file system
-				cv.SaveImage(self.__fref, clone)
+				self._writeimage(clone)
 				# Calculate aggregated calibration samples size
 				if self.__clbr:
 					self.__size += os.path.getsize(self.__fref) / 1024
@@ -715,11 +742,9 @@ class CamRecording(CamFunction):
 						self.__oref = None
 				# Write/Save video file on the file system
 				if self.__oref is not None:
-					cv.WriteFrame(self.__oref, clone)
-					self.__nfrm += 1
+					self._writevideo(clone)
 				else:
-					self.__oref = cv.CreateVideoWriter(self.__fref, cv.CV_FOURCC('M', 'P', '4', 'V'), self.__freq, cv.GetSize(frame), True)
-					self.__nfrm = 1
+					self._initvideo(clone)
 				# Calculate calibration sample size
 				if self.__clbr:
 					self.__size = os.path.getsize(self.__fref) / 1024
@@ -2091,6 +2116,24 @@ def cputempinfo():
 		return {"temp":any2float(data)}
 	except:
 		return None
+
+
+# Function: checkcamera
+def checkcamera(cid=0):
+	if cid == 0:
+		try:
+			p1 = subprocess.Popen(["vcgencmd", "get_camera"], stdout=subprocess.PIPE)
+			output = p1.communicate()[0]
+			supported = int(output.split()[0].split("=")[1])
+			installed = int(output.split()[1].split("=")[1])
+			if supported == 1 and installed == 1:
+				return True
+			else:
+				return False
+		except:
+			return False
+	elif cid > 0:
+		return os.path.isfile('/dev/video' + str(cid -1))
 
 
 # Function: log
