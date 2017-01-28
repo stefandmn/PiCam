@@ -11,23 +11,24 @@ __version__   = __init__.__version__
 __verbose__   = False
 
 import os
-import io
-import cv
+import cv2
 import sys
 import time
 import json
+import numpy
 import socket
 import getopt
 import logging
 import datetime
+import StringIO
 import threading
 import traceback
 import subprocess
+from PIL import Image
 from SocketServer import ThreadingMixIn, BaseRequestHandler, TCPServer
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 try:
-	from PIL import Image
-	from picamera import PiCamera
+	import picamera
 except:
 	print "%s | %s %s > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), "WARN", "PiCam", "Pi Camera is not supported")
 
@@ -60,14 +61,16 @@ class Camera(threading.Thread):
 		self._sleeptime = Camera.Sleeptime
 		self._resolution = None
 		self._framerate = None
+		self._brightness = None
+		self._saturation = None
 		# Initialize class private variables
 		self._exec = False
 		self._lock = False
 		# Define tools
 		self._camera = None
-		self._motion = CamMotion(self)
-		self._stream = CamStreaming(self)
-		self._record = CamRecording(self)
+		self._motion = MotionService(self)
+		self._stream = StreamingService(self)
+		self._record = RecordingService(self)
 		# Identify type of camera and initialize camera device
 		self.setCameraOn()
 		# Activate recording if was specified during initialization
@@ -95,19 +98,18 @@ class Camera(threading.Thread):
 			self._lock = True
 			try:
 				if self._id == 0:
-					self._camera = PiCamera()
-					self._camera.led = False
+					self._camera = picamera.PiCamera()
 					if self._resolution is not None:
 						self._camera.resolution = self._resolution
 					if self._framerate is not None:
 						self._camera.framerate = self._framerate
 				else:
-					self._camera = cv.CaptureFromCAM(self._id - 1)
+					self._camera = cv2.VideoCapture(self._id - 1)
 					if self._resolution is not None:
-						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_WIDTH, self._resolution[0])
-						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_HEIGHT, self._resolution[1])
+						self._camera.get(cv2.cv.CV_CAP_PROP_FRAME_WIDTH, self._resolution[0])
+						self._camera.get(cv2.cv.CV_CAP_PROP_FRAME_HEIGHT, self._resolution[1])
 					if self._framerate is not None:
-						cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FPS, self._framerate)
+						self._camera.get(cv2.cv.CV_CAP_PROP_FPS, self._framerate)
 			except BaseException as baseerr:
 				self._camera = None
 				self.log(["Camera service initialization failed:", baseerr])
@@ -126,7 +128,7 @@ class Camera(threading.Thread):
 			self._lock = True
 			try:
 				# For PiCamera call close method
-				if isinstance(self._camera, PiCamera):
+				if isinstance(self._camera, picamera.PiCamera):
 					self._camera.close()
 				# Destroy Camera instance
 				del self._camera
@@ -153,17 +155,14 @@ class Camera(threading.Thread):
 		if self.isCameraOn():
 			# Create new frame based on camera type
 			try:
-				if isinstance(self._camera, PiCamera):
-					byte_buffer = io.BytesIO()
-					self._camera.capture(byte_buffer, format='jpeg', use_video_port=True)
-					byte_buffer.seek(0)
-					pil = Image.open(byte_buffer)
-					frame = cv.CreateImageHeader(self._camera.resolution, cv.IPL_DEPTH_8U, 3)
-					cv.SetData(frame, pil.tostring())
-					cv.CvtColor(frame, frame, cv.CV_RGB2BGR)
+				if isinstance(self._camera, picamera.PiCamera):
+					frame = numpy.empty((self._camera.resolution[0], self._camera.resolution[1], 3), dtype=numpy.uint8)
+					self._camera.capture(frame, 'bgr')
 				else:
-					frame = cv.QueryFrame(self._camera)
-				cv.PutText(frame, "CAM " + str(self.id).rjust(2, '0'), (5, 15), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .35, .35, 0.0, 1, cv.CV_AA), (255, 255, 255))
+					retval, frame = self._camera.read()
+					if not retval:
+						return None
+				cv2.putText(frame, "CAM " + str(self.id).rjust(2, '0'), (5, 15), cv2.FONT_HERSHEY_PLAIN, 0.8, (0, 0, 255))
 			except:
 				frame = None
 			return frame
@@ -177,11 +176,11 @@ class Camera(threading.Thread):
 		if self.isStreamingEnabled():
 			self.setStreaming(False)
 		# Stop recording
-		if self.isRecordingEnabled():
-			self.setRecording(False)
+		if self.isCameraRecordingEnabled():
+			self.setCameraRecording(False)
 		# Stop motion detection
-		if self.isMotionDetectionEnabled():
-			self.setMotionDetection(False)
+		if self.isCameraMotionEnabled():
+			self.setCameraMotion(False)
 		# Stop camera
 		self.setCameraOff()
 		# Stop this thread
@@ -203,10 +202,10 @@ class Camera(threading.Thread):
 				# Process current frame
 				if self.frame is not None:
 					# If motion detection feature is active run it to detect motion
-					if self.isMotionDetectionEnabled():
+					if self.isCameraMotionEnabled():
 						self._motion.run(frame)
 					# If recording feature is active run it to record images or videos
-					if self.isRecordingEnabled():
+					if self.isCameraRecordingEnabled():
 						self._record.run(frame)
 					# If the streaming is active send the picture through the streaming channel
 					if self.isStreamingEnabled():
@@ -252,11 +251,11 @@ class Camera(threading.Thread):
 				else:
 					raise RuntimeError("Undefined camera resolution value: " + str(resolution))
 				# Configure camera
-				if isinstance(self._camera, PiCamera):
+				if isinstance(self._camera, picamera.PiCamera):
 					self._camera.resolution = self._resolution
 				else:
-					cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_WIDTH, self._resolution[0])
-					cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FRAME_HEIGHT, self._resolution[1])
+					self._camera.get(cv2.cv.CV_CAP_PROP_FRAME_WIDTH, self._resolution[0])
+					self._camera.get(cv2.cv.CV_CAP_PROP_FRAME_HEIGHT, self._resolution[1])
 			except BaseException as baseerr:
 				self.log(["Failed to apply camera resolution:", baseerr])
 			self._lock = False
@@ -274,10 +273,10 @@ class Camera(threading.Thread):
 				# Set value
 				self._framerate = framerate
 				# Configure camera
-				if isinstance(self._camera, PiCamera):
+				if isinstance(self._camera, picamera.PiCamera):
 					self._camera.framerate = self._framerate
 				else:
-					cv.SetCaptureProperty(self._camera, cv.CV_CAP_PROP_FPS, self._framerate)
+					self._camera.get(cv2.cv.CV_CAP_PROP_FPS, self._framerate)
 			except BaseException as baseerr:
 				self.log(["Failed to apply camera framerate:", baseerr])
 			self._lock = False
@@ -295,55 +294,67 @@ class Camera(threading.Thread):
 		return self._sleeptime
 
 	# Method: isMotionActive
-	def isMotionDetectionEnabled(self):
+	def isCameraMotionEnabled(self):
 		return self._motion.isRunning()
 
-	# Method: setMotionDetection
-	def setMotionDetection(self, flag):
-		if not self.isMotionDetectionEnabled() and flag:
+	# Method: setCameraMotion
+	def setCameraMotion(self, flag):
+		if not self.isCameraMotionEnabled() and flag:
 			self._motion.start()
-		elif self.isMotionDetectionEnabled() and not flag:
+		elif self.isCameraMotionEnabled() and not flag:
 			self._motion.stop()
-		elif self.isMotionDetectionEnabled() and flag:
+		elif self.isCameraMotionEnabled() and flag:
 			self.log("Motion Detection function is already activated", "WARN")
-		elif not self.isMotionDetectionEnabled() and not flag:
+		elif not self.isCameraMotionEnabled() and not flag:
 			self.log("Motion Detection function is not activated", "WARN")
 
-	# Method: setMotionDetectionThreshold
-	def setMotionDetectionThreshold(self, threshold):
+	# Method: setMotionThreshold
+	def setMotionThreshold(self, threshold):
 		self._motion.setThreshold(threshold)
 
-	# Method: getMotionDetectionThreshold
-	def getMotionDetectionThreshold(self):
+	# Method: getMotionThreshold
+	def getMotionThreshold(self):
 		return self._motion.getThreshold()
 
-	# Method: setMotionDetectionContour
-	def setMotionDetectionContour(self, contour):
+	# Method: setMotionContour
+	def setMotionContour(self, contour):
 		self._motion.setContour(contour)
 
-	# Method: getMotionDetectionContour
-	def getMotionDetectionContour(self):
-		return self._motion.isContour()
+	# Method: getMotionContour
+	def getMotionContour(self):
+		return self._motion.isContourEnabled()
+
+	# Method: setMotionSympathy
+	def setMotionSympathy(self, sympathy):
+		self._motion.setSympathy(sympathy)
+
+	# Method: getMotionSympathy
+	def getMotionSympathy(self):
+		return self._motion.getSympathy()
+
+	# Method: isMotionDetected
+	def isMotionDetected(self):
+		return self._motion.isMotion()
 
 	# Method: isRecordingEnabled
-	def isRecordingEnabled(self):
+	def isCameraRecordingEnabled(self):
 		return self._record.isRunning()
 
 	# Method: setCameraRecording
-	def setRecording(self, flag):
-		if not self.isRecordingEnabled() and flag:
+	def setCameraRecording(self, flag):
+		if not self.isCameraRecordingEnabled() and flag:
 			self._sync()
 			self._record.start()
-		elif self.isRecordingEnabled() and not flag:
+		elif self.isCameraRecordingEnabled() and not flag:
 			self._record.stop()
-		elif self.isRecordingEnabled() and flag:
+		elif self.isCameraRecordingEnabled() and flag:
 			self.log("Recording function is already activated", "WARN")
-		elif not self.isRecordingEnabled() and not flag:
+		elif not self.isCameraRecordingEnabled() and not flag:
 			self.log("Recording function is not activated", "WARN")
 
 	# Method: setRecordingLocation
 	def setRecordingLocation(self, location):
-		if self.isRecordingEnabled():
+		if self.isCameraRecordingEnabled():
 			self._record.stop()
 			self._record.setLocation(location)
 			self._record.start()
@@ -356,7 +367,7 @@ class Camera(threading.Thread):
 
 	# Method: setRecordingFormat
 	def setRecordingFormat(self, format):
-		if self.isRecordingEnabled():
+		if self.isCameraRecordingEnabled():
 			self._record.calibrate()
 			self._record.setFormat(format)
 		else:
@@ -371,11 +382,11 @@ class Camera(threading.Thread):
 		self._record.setMessage(text)
 
 	# Method: setRecordingSkip
-	def setRecordingSkipped(self, skip):
+	def setRecordingPause(self, skip):
 		self._record.setPaused(skip)
 
 	# Method: isRecordingSkipped
-	def isRecordingSkipped(self):
+	def isRecordingPaused(self):
 		return self._record.isPaused()
 
 	# Method: isStreamingEnabled
@@ -415,8 +426,8 @@ class Camera(threading.Thread):
 		return self._stream.getStreamingSleep()
 
 
-# Class: CamFunction
-class CamFunction:
+# Class: CamService
+class CamService:
 
 	# Constructor
 	def __init__(self, camera, start=False):
@@ -457,25 +468,25 @@ class CamFunction:
 		return
 
 
-# Class: CamMotion
-class CamMotion(CamFunction):
+# Class: MotionService
+class MotionService(CamService):
 	# Constructor
 	def __init__(self, camera, start=False):
-		CamFunction.__init__(self, camera, start=start)
+		CamService.__init__(self, camera, start=start)
 		# Motion detection properties
 		self._contour = True
-		self._threshold = 1500
+		self._threshold = 100
+		self._sympathy = 25
 		# Initialize engine parameters
 		self.__gray = None
-		self.__size = (320,240)
+		self.__dtmot = None
 		self.__ismot = False
-		self.__fkmot = 0
 
 	# Method: isContour
-	def isContour(self):
+	def isContourEnabled(self):
 		return self._contour
 
-	# Method: setRecording
+	# Method: setContour
 	def setContour(self, contour):
 		self._contour = contour
 
@@ -487,87 +498,62 @@ class CamMotion(CamFunction):
 	def setThreshold(self, threshold):
 		self._threshold = threshold
 
-	# Method: _gray
-	def _gray(self, frame):
-		copy = cv.CreateImage(cv.GetSize(frame), cv.IPL_DEPTH_8U, 1)
-		cv.CvtColor(frame, copy, cv.CV_RGB2GRAY)
-		resize = cv.CreateImage(self.__size, cv.IPL_DEPTH_8U, 1)
-		cv.Resize(copy, resize)
-		return resize
+	# Method: getSympathy
+	def getSympathy(self):
+		return self._sympathy
 
-	# Method: _absdiff
-	def _absdiff(self, frame1, frame2):
-		output = cv.CloneImage(frame1)
-		cv.AbsDiff(frame1, frame2, output)
-		return output
+	# Method: setSympathy
+	def setSympathy(self, sympathy):
+		self._sympathy = sympathy
 
-	# Method: _compute
-	def _compute(self, frame):
-		cv.Threshold(frame, frame, 35, 255, cv.CV_THRESH_BINARY)
-		cv.Dilate(frame, frame, None, 18)
-		cv.Erode(frame, frame, None, 10)
-		return frame
-
-	# Method: _area
-	def _area(self, move, frame):
-		points = []
-		area = 0
-		xsize = cv.GetSize(frame)[0] / self.__size[0]
-		ysize = cv.GetSize(frame)[1] / self.__size[1]
-		storage = cv.CreateMemStorage(0)
-		contour = cv.FindContours(move, storage, cv.CV_RETR_CCOMP, cv.CV_CHAIN_APPROX_SIMPLE)
-		while contour:
-			bound_rect = cv.BoundingRect(list(contour))
-			contour = contour.h_next()
-			# Compute the bounding points to the boxes that will be drawn on the screen
-			pt1 = (bound_rect[0] * xsize, bound_rect[1] * ysize)
-			pt2 = ((bound_rect[0] + bound_rect[2]) * xsize, (bound_rect[1] + bound_rect[3]) * ysize)
-			# Add this latest bounding box to the overall area that is being detected as movement
-			area += ((pt2[0] - pt1[0]) * (pt2[1] - pt1[1]))
-			if self.isContour() and area > self.getThreshold():
-				points.append(pt1)
-				points.append(pt2)
-				cv.Rectangle(frame, pt1, pt2, cv.CV_RGB(255,0,0), 1)
-		return area
+	# Method: isMotion
+	def isMotion(self):
+		return self.__ismot
 
 	# Method: run
 	def run(self, frame):
-		if frame is not None:
-			# Check if is needed to initialize the engine
-			if self.__gray is None:
-				if self._camera.isRecordingEnabled() and self._camera.getRecordingFormat() == 'image':
-					self._camera.setRecordingMessage("Start Monitoring")
-				self.__gray = self._gray(frame)
+		# Validate input frame
+		if frame is None:
+			return
+		# Resize the frame, convert it to grayscale, and blur it
+		gray = cv2.resize(frame, (320,240))
+		gray = cv2.cvtColor(gray, cv2.COLOR_BGR2GRAY)
+		gray = cv2.GaussianBlur(gray, (21, 21), 0)
+		# If the first frame is None, initialize it
+		if self.__gray is None:
+			self.__dtmot = datetime.datetime.now()
+			self.__gray = gray
+			return
+		# Compute the absolute difference between the current frame and first frame
+		delta = cv2.absdiff(self.__gray, gray)
+		thresh = cv2.threshold(delta, self.getSympathy(), 255, cv2.THRESH_BINARY)[1]
+		# Dilate the the thresholded image to fill in holes, then find contours on thresholded image
+		thresh = cv2.dilate(thresh, None, iterations=2)
+		(contours, _) = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+		# Preserve the gray image for next comparison
+		self.__gray = gray
+		# Check contour(s) and identify motion
+		if contours is not None and contours:
+			for contour in contours:
+				self.__ismot = cv2.contourArea(contour) >= self.getThreshold()
+				if self.__ismot:
+					# Record motion date/time
+					self.__dtmot = datetime.datetime.now()
+					# Compute the bounding box for the contour, draw it on the frame, and update the text
+					if self._contour:
+						(x, y, w, h) = cv2.boundingRect(contour)
+						xr = numpy.size(frame, 1) / 320
+						yr = numpy.size(frame, 0) / 240
+						cv2.rectangle(frame, (xr * x, yr * y), (xr * (x + w), yr * (y + h)), (0, 255, 0), 1)
 			else:
-				_gray = self._gray(frame)
-				_diff = self._absdiff(self.__gray, _gray)
-				_move = self._compute(_diff)
-				_area = self._area(_move, frame)
-				self.__gray = _gray
-				# Evaluation
-				if self._camera.isRecordingEnabled():
-					if _area > self.getThreshold():
-						self.__ismot = True
-						self.__fkmot = datetime.datetime.now()
-						self._camera.setRecordingSkipped(False)
-						self._camera.setRecordingMessage("Motion Detection")
-					elif _area <= self.getThreshold() and self.__ismot:
-						self.__fkmot = datetime.datetime.now() if self.__fkmot is None else self.__fkmot
-						if (datetime.datetime.now() - self.__fkmot).total_seconds() > 10:
-							self._camera.setRecordingSkipped(True)
-							self.__ismot = False
-							self.__fkmot = None
-					else:
-						self._camera.setRecordingSkipped(True)
-						self.__ismot = False
-						self.__fkmot = None
+				self.__ismot = False
 
 
-# Class: CamRecording
-class CamRecording(CamFunction):
+# Class: RecordingService
+class RecordingService(CamService):
 	# Constructor
 	def __init__(self, camera, start=False):
-		CamFunction.__init__(self, camera, start=start)
+		CamService.__init__(self, camera, start=start)
 		self._format = 'image'
 		self._location = '/tmp'
 		# Flag for motion detection suspend and resume functions and also to stop recording when resources are not enough
@@ -599,7 +585,7 @@ class CamRecording(CamFunction):
 		# Run calibration
 		self.calibrate()
 		# Activate service
-		CamFunction.start(self)
+		CamService.start(self)
 		# Start disk watchdog
 		self.resthread = threading.Thread(target=self.checkResources)
 		self.resthread.daemon = True
@@ -616,7 +602,7 @@ class CamRecording(CamFunction):
 		# Close video (if is activated)
 		self._closevideo()
 		# Deactivate service
-		CamFunction.stop(self)
+		CamService.stop(self)
 		# Stop check resources thread
 		self.resthread.terminate()
 		self.resthread = None
@@ -670,12 +656,12 @@ class CamRecording(CamFunction):
 	def _initvideo(self, frame):
 		self._closevideo()
 		self.__nfrm = 0
-		self.__oref = cv.CreateVideoWriter(self.__fref, cv.CV_FOURCC('M', 'P', '4', '2'), self.__freq, cv.GetSize(frame), True)
+		self.__oref = cv2.VideoWriter(self.__fref, cv2.cv.CV_FOURCC('M', 'P', '4', '2'), self.__freq, (numpy.size(frame, 1), numpy.size(frame, 0)), True)
 		self._writevideo(frame)
 
 	# Method: _writevideo
 	def _writevideo(self, frame):
-		cv.WriteFrame(self.__oref, frame)
+		self.__oref.write(frame)
 		self.__nfrm += 1
 
 	# Method: _closevideo
@@ -686,7 +672,7 @@ class CamRecording(CamFunction):
 
 	# Method: _writeimage
 	def _writeimage(self, frame):
-		cv.SaveImage(self.__fref, frame)
+		cv2.imwrite(self.__fref, frame)
 		self.__nfrm += 1
 
 	# Method: run
@@ -702,19 +688,17 @@ class CamRecording(CamFunction):
 			elif self._format == 'video':
 				self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
 				self.__fref += "-calibration-sample.avi"
-		# Validate recording message
-		if self.__text is None:
-			if self.__clbr:
-				self.__text = "Calibrating"
-			else:
+		# Define recording message
+		if self.__clbr:
+			message = "Calibrating @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
+		else:
+			if self.__text is None:
 				self.__text = "Recording"
+			message = self.__text + " @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
 		# Recording and calibration workflow
 		try:
-			# Get the frame close
-			clone = cv.CloneImage(frame)
 			# Set recording message and add it to the frame
-			message = self.__text + " @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
-			cv.PutText(clone, message, (10, cv.GetSize(clone)[1] - 10), cv.InitFont(cv.CV_FONT_HERSHEY_COMPLEX, .32, .32, 0.0, 1, cv.CV_AA), (255, 255, 255))
+			cv2.putText(frame, message, (10, numpy.size(frame, 0) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255))
 			# Define the name of image file
 			if self._format == 'image':
 				if not self.__clbr:
@@ -722,16 +706,16 @@ class CamRecording(CamFunction):
 					self.__fref += "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
 					self.__fref += ".png"
 				# Write/Save image file on the file system
-				self._writeimage(clone)
+				self._writeimage(frame)
 				# Calculate aggregated calibration samples size
 				if self.__clbr:
 					self.__size += os.path.getsize(self.__fref) / 1024
 			elif self._format == 'video':
 				if not self.__clbr:
 					# If the file reach the maximum number of frames reset the name
-					if self.__nfrm >= 12000:
-						self.__fref = None
-						self.__nfrm = 0
+					#if self.__nfrm >= 12000:
+					#	self.__fref = None
+					#	self.__nfrm = 0
 					# Define video file name
 					if self.__fref is None:
 						self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
@@ -742,14 +726,14 @@ class CamRecording(CamFunction):
 						self.__oref = None
 				# Write/Save video file on the file system
 				if self.__oref is not None:
-					self._writevideo(clone)
+					self._writevideo(frame)
 				else:
-					self._initvideo(clone)
+					self._initvideo(frame)
 				# Calculate calibration sample size
 				if self.__clbr:
 					self.__size = os.path.getsize(self.__fref) / 1024
 			# Delete the frame copy used for recording
-			del clone
+			#del clone
 			# Reset the errors counter detected during recording
 			self.__nerr = 0
 		except BaseException as baserr:
@@ -804,10 +788,10 @@ class CamRecording(CamFunction):
 
 
 # Class: CamStreaming
-class CamStreaming(CamFunction):
+class StreamingService(CamService):
 	# Constructor
 	def __init__(self, camera, start=False):
-		CamFunction.__init__(self, camera, start=start)
+		CamService.__init__(self, camera, start=start)
 		self._stream = None
 		self._sleep = Camera.StreamSleeptime
 		self._iface = Camera.StreamInterface
@@ -883,22 +867,24 @@ class StreamHandler(BaseHTTPRequestHandler):
 			self.send_header("Expires", "0")
 			self.send_header("Cache-Control", "no-cache, private")
 			self.send_header("Pragma", "no-cache")
-			self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=--BOUNDARYSTRING")
+			self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=--jpgboundary")
 			self.end_headers()
 			while True:
 				if self._server.getData() is None:
 					continue
-				JpegData = cv.EncodeImage(".jpeg", self._server.getData(), (cv.CV_IMWRITE_JPEG_QUALITY, 75)).tostring()
-				self.wfile.write("--BOUNDARYSTRING\r\n")
+				frameRGB = cv2.cvtColor(self._server.getData(), cv2.COLOR_BGR2RGB)
+				jpg = Image.fromarray(frameRGB)
+				buffer = StringIO.StringIO()
+				jpg.save(buffer, 'JPEG')
+				self.wfile.write("--jpgboundary\n")
 				self.send_header("Content-type", "image/jpeg")
-				self.send_header("Content-Length", str(len(JpegData)))
+				self.send_header('Content-length',str(buffer.len))
 				self.end_headers()
-				self.wfile.write(JpegData)
-				self.wfile.write("\r\n")
+				jpg.save(self.wfile, 'JPEG')
 				time.sleep(self._server.getSleep())
 			return
 		except BaseException as baseerr:
-			self.send_error(500, 'PiCam Streaming Server Error: \r\n\r\n%s' % str(baseerr))
+			self.send_error(500, 'PiCam Streaming Server Error: \n\n%s' % str(baseerr))
 			if __verbose__:
 				traceback.print_exc()
 
@@ -1142,14 +1128,15 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 				result += ', "' + StateData.Properties[5] + '":' + ('"default"' if camera.getCameraFramerate() is None else any2str(camera.getCameraFramerate()))
 				# CameraFramerate
 				result += ', "' + StateData.Properties[6] + '":' + ('"default"' if camera.getCameraFramerate() is None else any2str(camera.getCameraSleeptime()))
-				# CameraMotionDetection
-				result += ', "' + StateData.Properties[3] + '":"' + ('On' if camera.isMotionDetectionEnabled() else 'Off') + '"'
-				if camera.isMotionDetectionEnabled():
-					result += ', "' + StateData.Properties[7] + '":"' + ('On' if camera.getMotionDetectionContour() else 'Off') + '"'
-					result += ', "' + StateData.Properties[10] + '":' + any2str(camera.getMotionDetectionThreshold())
+				# CameraMotion
+				result += ', "' + StateData.Properties[3] + '":"' + ('On' if camera.isCameraMotionEnabled() else 'Off') + '"'
+				if camera.isCameraMotionEnabled():
+					result += ', "' + StateData.Properties[7] + '":"' + ('On' if camera.getMotionContour() else 'Off') + '"'
+					result += ', "' + StateData.Properties[10] + '":' + any2str(camera.getMotionThreshold())
+					result += ', "' + StateData.Properties[14] + '":' + any2str(camera.getMotionSympathy())
 				# CameraRecording
-				result += ', "' + StateData.Properties[8] + '":"' + ('On' if camera.isRecordingEnabled() else 'Off') + '"'
-				if camera.isRecordingEnabled():
+				result += ', "' + StateData.Properties[8] + '":"' + ('On' if camera.isCameraRecordingEnabled() else 'Off') + '"'
+				if camera.isCameraRecordingEnabled():
 					result += ', "' + StateData.Properties[9] + '":"' + any2str(camera.getRecordingFormat()) + '"'
 					result += ', "' + StateData.Properties[11] + '":"' + any2str(camera.getRecordingLocation()) + '"'
 				# CameraStreaming
@@ -1262,9 +1249,9 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 					# Evaluate CameraStreaming property
 					if camprop.lower() == StateData.Properties[2].lower():
 						camera.setStreaming(any2bool(camdata))
-					# Evaluate CameraMotionDetection property
+					# Evaluate CameraMotion property
 					elif camprop.lower() == StateData.Properties[3].lower():
-						camera.setMotionDetection(any2bool(camdata))
+						camera.setCameraMotion(any2bool(camdata))
 					# Evaluate CameraResolution property
 					elif camprop.lower() == StateData.Properties[4].lower():
 						camera.setCameraResolution(any2str(camdata))
@@ -1274,15 +1261,18 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 					# Evaluate CameraSleeptime property
 					elif camprop.lower() == StateData.Properties[6].lower():
 						camera.setCameraSleeptime(any2float(camdata))
-					# Evaluate MotionDetectionContour property
+					# Evaluate MotionContour property
 					elif camprop.lower() == StateData.Properties[7].lower():
-						camera.setMotionDetectionContour(any2bool(camdata))
-					# Evaluate MotionDetectionThreshold property
+						camera.setMotionContour(any2bool(camdata))
+					# Evaluate MotionThreshold property
 					elif camprop.lower() == StateData.Properties[10].lower():
-						camera.setMotionDetectionThreshold(any2int(camdata))
+						camera.setMotionThreshold(any2int(camdata))
+					# Evaluate MotionSympathy property
+					elif camprop.lower() == StateData.Properties[14].lower():
+						camera.setMotionSympathy(any2int(camdata))
 					# Evaluate CameraRecording property
 					elif camprop.lower() == StateData.Properties[8].lower():
-						camera.setRecording(any2bool(camdata))
+						camera.setCameraRecording(any2bool(camdata))
 					# Evaluate RecordingFormat property
 					elif camprop.lower() == StateData.Properties[9].lower():
 						camera.setRecordingFormat(any2str(camdata))
@@ -1390,17 +1380,25 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 									result["set-properties"].append(jsonout["result"]["property"])
 							else:
 								msg += ('. ' + str(jsonout["message"]))
-						# MotionDetectionContour
-						if service.get("MotionDetectionContour"):
-							jsonout = json.loads(self.runPropertySet(CameraId, "MotionDetectionContour", service["MotionDetectionContour"]))
+						# MotionContour
+						if service.get("MotionContour"):
+							jsonout = json.loads(self.runPropertySet(CameraId, "MotionContour", service["MotionContour"]))
 							if jsonout["achieved"]:
 								if result["set-properties"].count(jsonout["result"]["property"]) == 0:
 									result["set-properties"].append(jsonout["result"]["property"])
 							else:
 								msg += ('. ' + str(jsonout["message"]))
-						# MotionDetectionThreshold
-						if service.get("MotionDetectionThreshold"):
-							jsonout = json.loads(self.runPropertySet(CameraId, "MotionDetectionThreshold", service["MotionDetectionThreshold"]))
+						# MotionThreshold
+						if service.get("MotionThreshold"):
+							jsonout = json.loads(self.runPropertySet(CameraId, "MotionThreshold", service["MotionThreshold"]))
+							if jsonout["achieved"]:
+								if result["set-properties"].count(jsonout["result"]["property"]) == 0:
+									result["set-properties"].append(jsonout["result"]["property"])
+							else:
+								msg += ('. ' + str(jsonout["message"]))
+						# MotionSympathy
+						if service.get("MotionSympathy"):
+							jsonout = json.loads(self.runPropertySet(CameraId, "MotionSympathy", service["MotionSympathy"]))
 							if jsonout["achieved"]:
 								if result["set-properties"].count(jsonout["result"]["property"]) == 0:
 									result["set-properties"].append(jsonout["result"]["property"])
@@ -1438,17 +1436,17 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 									result["set-properties"].append(jsonout["result"]["property"])
 							else:
 								msg += ('. ' + str(jsonout["message"]))
-						# Function: CameraMotionDetection
-						if service.get("CameraMotionDetection") and any2bool(service["CameraMotionDetection"]):
-							jsonout = json.loads(self.runPropertySet(CameraId, "CameraMotionDetection", service["CameraMotionDetection"]))
+						# Function: CameraMotion
+						if service.get("CameraMotion") and any2bool(service["CameraMotion"]):
+							jsonout = json.loads(self.runPropertySet(CameraId, "CameraMotion", service["CameraMotion"]))
 							if jsonout["achieved"]:
 								if result["set-properties"].count(jsonout["result"]["property"]) == 0:
 									result["set-properties"].append(jsonout["result"]["property"])
 							else:
 								msg += ('. ' + str(jsonout["message"]))
-						elif service.get("CameraMotionDetection") and not any2bool(service["CameraMotionDetection"]):
+						elif service.get("CameraMotion") and not any2bool(service["CameraMotion"]):
 							if not CameraStarted:
-								jsonout = json.loads(self.runPropertySet(CameraId, "CameraMotionDetection", service["CameraMotionDetection"]))
+								jsonout = json.loads(self.runPropertySet(CameraId, "CameraMotion", service["CameraMotion"]))
 								if jsonout["achieved"]:
 									if result["set-properties"].count(jsonout["result"]["property"]) == 0:
 										result["set-properties"].append(jsonout["result"]["property"])
@@ -1733,12 +1731,13 @@ class PiCamClient:
 				elif service.get("CameraStreaming") and not any2bool(service["CameraStreaming"]):
 					text += '\n\t\t| CameraStreaming: Off'
 				# Motion Detection
-				if service.get("CameraMotionDetection") and any2bool(service["CameraMotionDetection"]):
-					text += '\n\t\t| CameraMotionDetection: On'
-					text += '\n\t\t\t|| MotionDetectionContour: ' + ('On' if service["MotionDetectionContour"] else 'Off')
-					text += '\n\t\t\t|| MotionDetectionThreshold: ' + any2str(service["MotionDetectionThreshold"])
-				elif service.get("CameraMotionDetection") and not any2bool(service["CameraMotionDetection"]):
-					text += '\n\t\t| CameraMotionDetection: Off'
+				if service.get("CameraMotion") and any2bool(service["CameraMotion"]):
+					text += '\n\t\t| CameraMotion: On'
+					text += '\n\t\t\t|| MotionContour: ' + ('On' if service["MotionContour"] else 'Off')
+					text += '\n\t\t\t|| MotionThreshold: ' + any2str(service["MotionThreshold"])
+					text += '\n\t\t\t|| MotionSympathy: ' + any2str(service["MotionSympathy"])
+				elif service.get("CameraMotion") and not any2bool(service["CameraMotion"]):
+					text += '\n\t\t| CameraMotion: Off'
 				# Recording
 				if service.get("CameraRecording") and any2bool(service["CameraRecording"]):
 					text += '\n\t\t| CameraRecording: On'
@@ -1798,14 +1797,17 @@ class PiCamClient:
 							# CameraSleeptime
 							if service.get("CameraSleeptime") and service["CameraSleeptime"] != "default":
 								content.append("set property CameraSleeptime=" + any2str(service["CameraSleeptime"]) + CameraId)
-							# MotionDetectionContour
-							if service.get("MotionDetectionContour") and any2bool(service["MotionDetectionContour"]):
-								content.append("enable property MotionDetectionContour" + CameraId)
-							elif service.get("MotionDetectionContour") and not any2bool(service["MotionDetectionContour"]):
-								content.append("disable property MotionDetectionContour" + CameraId)
-							# MotionDetectionThreshold
-							if service.get("MotionDetectionThreshold") and service["MotionDetectionThreshold"] != "default":
-								content.append("set property MotionDetectionThreshold=" + any2str(service["MotionDetectionThreshold"]) + CameraId)
+							# MotionContour
+							if service.get("MotionContour") and any2bool(service["MotionContour"]):
+								content.append("enable property MotionContour" + CameraId)
+							elif service.get("MotionContour") and not any2bool(service["MotionContour"]):
+								content.append("disable property MotionContour" + CameraId)
+							# MotionThreshold
+							if service.get("MotionThreshold") and service["MotionThreshold"] != "default":
+								content.append("set property MotionThreshold=" + any2str(service["MotionThreshold"]) + CameraId)
+							# MotionSympathy
+							if service.get("MotionSympathy") and service["MotionSympathy"] != "default":
+								content.append("set property MotionSympathy=" + any2str(service["MotionSympathy"]) + CameraId)
 							# RecordingFormat
 							if service.get("RecordingFormat") and service["RecordingFormat"] != "default":
 								content.append("set property RecordingFormat=" + any2str(service["RecordingFormat"]) + CameraId)
@@ -1818,12 +1820,12 @@ class PiCamClient:
 							# StreamingSleeptime
 							if service.get("StreamingSleeptime") and service["StreamingSleeptime"] != "default":
 								content.append("set property StreamingSleeptime=" + any2str(service["StreamingSleeptime"]) + CameraId)
-							# Function: CameraMotionDetection
-							if service.get("CameraMotionDetection") and any2bool(service["CameraMotionDetection"]):
-								content.append("enable property CameraMotionDetection" + CameraId)
-							elif service.get("CameraMotionDetection") and not any2bool(service["CameraMotionDetection"]):
+							# Function: CameraMotion
+							if service.get("CameraMotion") and any2bool(service["CameraMotion"]):
+								content.append("enable property CameraMotion" + CameraId)
+							elif service.get("CameraMotion") and not any2bool(service["CameraMotion"]):
 								if not CameraStarted:
-									content.append("disable property CameraMotionDetection" + CameraId)
+									content.append("disable property CameraMotion" + CameraId)
 							# Function CameraRecording
 							if service.get("CameraRecording") and any2bool(service["CameraRecording"]):
 								content.append("enable property CameraRecording" + CameraId)
@@ -1844,7 +1846,7 @@ class PiCamClient:
 						else:
 							command = cmdline.strip()
 			except BaseException as baserr:
-				self.log(["Error transforming configuration into command:", baserr], type="ERROR", server=False)
+				self.log(["Error transforming configuration into command:", baserr], type="ERROR")
 		return command
 
 
@@ -1852,9 +1854,9 @@ class PiCamClient:
 class StateData:
 	Actions = ['init', 'shutdown', 'start', 'stop', 'set', 'enable', 'disable', 'status', 'echo', 'load', 'save']
 	Subjects = ['server', 'service', 'property']
-	Properties = ['CameraId', 'CameraStatus', 'CameraStreaming', 'CameraMotionDetection', 'CameraResolution', 'CameraFramerate',
-				  'CameraSleeptime', 'MotionDetectionContour', 'CameraRecording', 'RecordingFormat', 'MotionDetectionThreshold',
-				  'RecordingLocation', 'StreamingPort', 'StreamingSleeptime']
+	Properties = ['CameraId', 'CameraStatus', 'CameraStreaming', 'CameraMotion', 'CameraResolution', 'CameraFramerate',
+				  'CameraSleeptime', 'MotionContour', 'CameraRecording', 'RecordingFormat', 'MotionThreshold',
+				  'RecordingLocation', 'StreamingPort', 'StreamingSleeptime', 'MotionSympathy']
 	Articles = ['@', 'at', 'on', 'in', 'to', 'from']
 
 	# Constructor
@@ -2133,7 +2135,9 @@ def checkcamera(cid=0):
 		except:
 			return False
 	elif cid > 0:
-		return os.path.isfile('/dev/video' + str(cid -1))
+		return os.path.exists('/dev/video' + str(cid - 1))
+	else:
+		return False
 
 
 # Function: log
