@@ -28,7 +28,8 @@ from PIL import Image
 from SocketServer import ThreadingMixIn, BaseRequestHandler, TCPServer
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 try:
-	import picamera
+	from picamera import PiCamera
+	from picamera.array import PiRGBArray
 except:
 	print "%s | %s %s > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), "WARN", "PiCam", "Pi Camera is not supported")
 
@@ -99,18 +100,9 @@ class Camera(threading.Thread):
 			self._lock = True
 			try:
 				if self._id == 0:
-					self._camera = picamera.PiCamera()
-					if self._resolution is not None:
-						self._camera.resolution = self._resolution
-					if self._framerate is not None:
-						self._camera.framerate = self._framerate
+					self._camera = PiCamera()
 				else:
 					self._camera = cv2.VideoCapture(self._id - 1)
-					if self._resolution is not None:
-						self._camera.get(cv2.cv.CV_CAP_PROP_FRAME_WIDTH, self._resolution[0])
-						self._camera.get(cv2.cv.CV_CAP_PROP_FRAME_HEIGHT, self._resolution[1])
-					if self._framerate is not None:
-						self._camera.get(cv2.cv.CV_CAP_PROP_FPS, self._framerate)
 			except BaseException as baseerr:
 				self._camera = None
 				self.log(["Camera service initialization failed:", baseerr])
@@ -129,7 +121,7 @@ class Camera(threading.Thread):
 			self._lock = True
 			try:
 				# For PiCamera call close method
-				if isinstance(self._camera, picamera.PiCamera):
+				if isinstance(self._camera, PiCamera):
 					self._camera.close()
 				# Destroy Camera instance
 				del self._camera
@@ -150,20 +142,19 @@ class Camera(threading.Thread):
 			else:
 				time.sleep(Camera.Sleeptime)
 
-	# Property: frame
-	@property
-	def frame(self):
+	# Method: getFrame
+	def getFrame(self):
 		if self.isCameraOn():
 			# Create new frame based on camera type
 			try:
-				if isinstance(self._camera, picamera.PiCamera):
-					frame = numpy.empty((self._camera.resolution[0], self._camera.resolution[1], 3), dtype=numpy.uint8)
-					self._camera.capture(frame, 'bgr')
+				if isinstance(self._camera, PiCamera):
+					stream = PiRGBArray(self._camera)
+					self._camera.capture(stream, 'bgr', use_video_port=True)
+					frame = stream.array
 				else:
-					retval, frame = self._camera.read()
-					if not retval:
-						return None
-				cv2.putText(frame, "CAM " + str(self.id).rjust(2, '0'), (5, 15), cv2.FONT_HERSHEY_PLAIN, 0.8, (0, 0, 255))
+					_, frame = self._camera.read()
+				if frame is not None:
+					cv2.putText(frame, "CAM " + str(self.id).rjust(2, '0'), (5, 15), cv2.FONT_HERSHEY_PLAIN, 0.8, (0, 0, 255))
 			except:
 				frame = None
 			return frame
@@ -174,13 +165,13 @@ class Camera(threading.Thread):
 	def stop(self):
 		self._exec = False
 		# Stop streaming
-		if self.isStreamingEnabled():
-			self.setStreaming(False)
+		if self.isCameraStreamingOn():
+			self.setCameraStreaming(False)
 		# Stop recording
-		if self.isCameraRecordingEnabled():
+		if self.isCameraRecordingOn():
 			self.setCameraRecording(False)
 		# Stop motion detection
-		if self.isCameraMotionEnabled():
+		if self.isCameraMotionOn():
 			self.setCameraMotion(False)
 		# Stop camera
 		self.setCameraOff()
@@ -199,17 +190,17 @@ class Camera(threading.Thread):
 		while self._exec:
 			try:
 				# Capture next frame
-				frame = self.frame
+				frame = self.getFrame()
 				# Process current frame
-				if self.frame is not None:
+				if frame is not None:
 					# If motion detection feature is active run it to detect motion
-					if self.isCameraMotionEnabled():
+					if self.isCameraMotionOn():
 						self._motion.run(frame)
 					# If recording feature is active run it to record images or videos
-					if self.isCameraRecordingEnabled():
+					if self.isCameraRecordingOn():
 						self._record.run(frame)
 					# If the streaming is active send the picture through the streaming channel
-					if self.isStreamingEnabled():
+					if self.isCameraStreamingOn():
 						self._stream.run(frame)
 				# Sleep for couple of seconds or milliseconds
 				if self._sleeptime > 0:
@@ -252,14 +243,14 @@ class Camera(threading.Thread):
 				else:
 					raise RuntimeError("Undefined camera resolution value: " + str(resolution))
 				# Configure camera
-				if isinstance(self._camera, picamera.PiCamera):
+				if isinstance(self._camera, PiCamera):
 					self._camera.resolution = self._resolution
 				else:
 					self._camera.get(cv2.cv.CV_CAP_PROP_FRAME_WIDTH, self._resolution[0])
 					self._camera.get(cv2.cv.CV_CAP_PROP_FRAME_HEIGHT, self._resolution[1])
-			except BaseException as baseerr:
+			except Exception as err:
 				self._resolution = None
-				self.log(["Failed to apply camera resolution:", baseerr])
+				self.log(["Failed to apply camera resolution:", err])
 			self._lock = False
 
 	# Method: getCameraResolution
@@ -275,13 +266,13 @@ class Camera(threading.Thread):
 				# Set value
 				self._framerate = framerate
 				# Configure camera
-				if isinstance(self._camera, picamera.PiCamera):
+				if isinstance(self._camera, PiCamera):
 					self._camera.framerate = self._framerate
 				else:
 					self._camera.get(cv2.cv.CV_CAP_PROP_FPS, self._framerate)
-			except BaseException as baseerr:
+			except Exception as err:
 				self._framerate = None
-				self.log(["Failed to apply camera framerate:", baseerr])
+				self.log(["Failed to apply camera framerate:", err])
 			self._lock = False
 
 	# Method: getCameraFramerate
@@ -297,13 +288,13 @@ class Camera(threading.Thread):
 				# Set value
 				self._brightness = brightness
 				# Configure camera
-				if isinstance(self._camera, picamera.PiCamera):
+				if isinstance(self._camera, PiCamera):
 					self._camera.brightness = self._brightness
 				else:
 					self._camera.get(cv2.cv.CV_CAP_PROP_BRIGHTNESS, self._brightness)
-			except BaseException as baseerr:
+			except Exception as err:
 				self._brightness = None
-				self.log(["Failed to apply camera brightness:", baseerr])
+				self.log(["Failed to apply camera brightness:", err])
 			self._lock = False
 
 	# Method: getCameraBrightness
@@ -319,13 +310,13 @@ class Camera(threading.Thread):
 				# Set value
 				self._saturation = saturation
 				# Configure camera
-				if isinstance(self._camera, picamera.PiCamera):
+				if isinstance(self._camera, PiCamera):
 					self._camera.saturation = self._saturation
 				else:
 					self._camera.get(cv2.cv.CV_CAP_PROP_SATURATION, self._saturation)
-			except BaseException as baseerr:
+			except Exception as err:
 				self._saturation = None
-				self.log(["Failed to apply camera saturation:", baseerr])
+				self.log(["Failed to apply camera saturation:", err])
 			self._lock = False
 
 	# Method: getCameraSaturation
@@ -341,13 +332,13 @@ class Camera(threading.Thread):
 				# Set value
 				self._contrast = contrast
 				# Configure camera
-				if isinstance(self._camera, picamera.PiCamera):
+				if isinstance(self._camera, PiCamera):
 					self._camera.contrast = self._contrast
 				else:
 					self._camera.get(cv2.cv.CV_CAP_PROP_CONTRAST, self._contrast)
-			except BaseException as baseerr:
+			except Exception as err:
 				self._contrast = None
-				self.log(["Failed to apply camera contrast:", baseerr])
+				self.log(["Failed to apply camera contrast:", err])
 			self._lock = False
 
 	# Method: getCameraContrast
@@ -363,18 +354,18 @@ class Camera(threading.Thread):
 		return self._sleeptime
 
 	# Method: isMotionActive
-	def isCameraMotionEnabled(self):
+	def isCameraMotionOn(self):
 		return self._motion.isRunning()
 
 	# Method: setCameraMotion
 	def setCameraMotion(self, flag):
-		if not self.isCameraMotionEnabled() and flag:
+		if not self.isCameraMotionOn() and flag:
 			self._motion.start()
-		elif self.isCameraMotionEnabled() and not flag:
+		elif self.isCameraMotionOn() and not flag:
 			self._motion.stop()
-		elif self.isCameraMotionEnabled() and flag:
+		elif self.isCameraMotionOn() and flag:
 			self.log("Motion Detection function is already activated", "WARN")
-		elif not self.isCameraMotionEnabled() and not flag:
+		elif not self.isCameraMotionOn() and not flag:
 			self.log("Motion Detection function is not activated", "WARN")
 
 	# Method: setMotionThreshold
@@ -406,24 +397,24 @@ class Camera(threading.Thread):
 		return self._motion.isMotion()
 
 	# Method: isRecordingEnabled
-	def isCameraRecordingEnabled(self):
+	def isCameraRecordingOn(self):
 		return self._record.isRunning()
 
 	# Method: setCameraRecording
 	def setCameraRecording(self, flag):
-		if not self.isCameraRecordingEnabled() and flag:
+		if not self.isCameraRecordingOn() and flag:
 			self._sync()
 			self._record.start()
-		elif self.isCameraRecordingEnabled() and not flag:
+		elif self.isCameraRecordingOn() and not flag:
 			self._record.stop()
-		elif self.isCameraRecordingEnabled() and flag:
+		elif self.isCameraRecordingOn() and flag:
 			self.log("Recording function is already activated", "WARN")
-		elif not self.isCameraRecordingEnabled() and not flag:
+		elif not self.isCameraRecordingOn() and not flag:
 			self.log("Recording function is not activated", "WARN")
 
 	# Method: setRecordingLocation
 	def setRecordingLocation(self, location):
-		if self.isCameraRecordingEnabled():
+		if self.isCameraRecordingOn():
 			self._record.stop()
 			self._record.setLocation(location)
 			self._record.start()
@@ -436,7 +427,7 @@ class Camera(threading.Thread):
 
 	# Method: setRecordingFormat
 	def setRecordingFormat(self, format):
-		if self.isCameraRecordingEnabled():
+		if self.isCameraRecordingOn():
 			self._record.calibrate()
 			self._record.setFormat(format)
 		else:
@@ -458,24 +449,24 @@ class Camera(threading.Thread):
 	def isRecordingPaused(self):
 		return self._record.isPaused()
 
-	# Method: isStreamingEnabled
-	def isStreamingEnabled(self):
+	# Method: isCameraStreamingOn
+	def isCameraStreamingOn(self):
 		return self._stream.isRunning()
 
-	# Method: setStreamingOn
-	def setStreaming(self, flag):
-		if not self.isStreamingEnabled() and flag:
+	# Method: setCameraStreaming
+	def setCameraStreaming(self, flag):
+		if not self.isCameraStreamingOn() and flag:
 			self._stream.start()
-		elif self.isStreamingEnabled() and not flag:
+		elif self.isCameraStreamingOn() and not flag:
 			self._stream.stop()
-		elif self.isStreamingEnabled() and flag:
+		elif self.isCameraStreamingOn() and flag:
 			self.log("Streaming function is already activated", "WARN")
-		elif not self.isStreamingEnabled() and not flag:
+		elif not self.isCameraStreamingOn() and not flag:
 			self.log("Streaming function is not activated", "WARN")
 
 	# Method: setStreamingPort
 	def setStreamingPort(self, port):
-		if self.isStreamingEnabled():
+		if self.isCameraStreamingOn():
 			self._stream.stop()
 			self._stream.setStreamingPort(port)
 			self._stream.start()
@@ -1204,19 +1195,19 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 				# CameraSleeptime
 				result += ', "' + StateData.Properties[6] + '":' + ('"default"' if camera.getCameraSleeptime() is None else any2str(camera.getCameraSleeptime()))
 				# CameraMotion
-				result += ', "' + StateData.Properties[3] + '":"' + ('On' if camera.isCameraMotionEnabled() else 'Off') + '"'
-				if camera.isCameraMotionEnabled():
+				result += ', "' + StateData.Properties[3] + '":"' + ('On' if camera.isCameraMotionOn() else 'Off') + '"'
+				if camera.isCameraMotionOn():
 					result += ', "' + StateData.Properties[7] + '":"' + ('On' if camera.getMotionContour() else 'Off') + '"'
 					result += ', "' + StateData.Properties[10] + '":' + any2str(camera.getMotionThreshold())
 					result += ', "' + StateData.Properties[14] + '":' + any2str(camera.getMotionSympathy())
 				# CameraRecording
-				result += ', "' + StateData.Properties[8] + '":"' + ('On' if camera.isCameraRecordingEnabled() else 'Off') + '"'
-				if camera.isCameraRecordingEnabled():
+				result += ', "' + StateData.Properties[8] + '":"' + ('On' if camera.isCameraRecordingOn() else 'Off') + '"'
+				if camera.isCameraRecordingOn():
 					result += ', "' + StateData.Properties[9] + '":"' + any2str(camera.getRecordingFormat()) + '"'
 					result += ', "' + StateData.Properties[11] + '":"' + any2str(camera.getRecordingLocation()) + '"'
 				# CameraStreaming
-				result += ', "' + StateData.Properties[2] + '":"' + ('On' if camera.isStreamingEnabled() else 'Off') + '"'
-				if camera.isStreamingEnabled():
+				result += ', "' + StateData.Properties[2] + '":"' + ('On' if camera.isCameraStreamingOn() else 'Off') + '"'
+				if camera.isCameraStreamingOn():
 					result += ', "' + StateData.Properties[12] + '":' + any2str(camera.getStreamingPort())
 					result += ', "' + StateData.Properties[13] + '":' + any2str(camera.getStreamingSleep())
 				result += '}'
@@ -1323,7 +1314,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 					camera = self.getCameras()[key]
 					# Evaluate CameraStreaming property
 					if camprop.lower() == StateData.Properties[2].lower():
-						camera.setStreaming(any2bool(camdata))
+						camera.setCameraStreaming(any2bool(camdata))
 					# Evaluate CameraMotion property
 					elif camprop.lower() == StateData.Properties[3].lower():
 						camera.setCameraMotion(any2bool(camdata))
@@ -1374,7 +1365,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 						lvl = 'WARN'
 						msg = 'Unknown property: ' + camprop
 					if achieved:
-						msg = "Camera " + key + " has been updated based on property '" + camprop + "' = '" + str(camdata) + "'"
+						msg = "Camera " + key + " has been updated using property '" + camprop + "' = '" + str(camdata) + "'"
 				except BaseException as stderr:
 					achieved = False
 					lvl, msg = tomsg(["Error setting property '" + camprop + "' = '" + str(camdata) + "' on camera " + key + ":", stderr], logger=self._logger)
