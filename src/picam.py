@@ -63,6 +63,7 @@ class Camera(threading.Thread):
 		self._framerate = None
 		self._brightness = None
 		self._saturation = None
+		self._contrast = None
 		# Initialize class private variables
 		self._exec = False
 		self._lock = False
@@ -257,6 +258,7 @@ class Camera(threading.Thread):
 					self._camera.get(cv2.cv.CV_CAP_PROP_FRAME_WIDTH, self._resolution[0])
 					self._camera.get(cv2.cv.CV_CAP_PROP_FRAME_HEIGHT, self._resolution[1])
 			except BaseException as baseerr:
+				self._resolution = None
 				self.log(["Failed to apply camera resolution:", baseerr])
 			self._lock = False
 
@@ -278,12 +280,79 @@ class Camera(threading.Thread):
 				else:
 					self._camera.get(cv2.cv.CV_CAP_PROP_FPS, self._framerate)
 			except BaseException as baseerr:
+				self._framerate = None
 				self.log(["Failed to apply camera framerate:", baseerr])
 			self._lock = False
 
 	# Method: getCameraFramerate
 	def getCameraFramerate(self):
 		return self._framerate
+
+	# Method: setCameraBrightness
+	def setCameraBrightness(self, brightness):
+		if self.isCameraOn() and brightness is not None:
+			self._sync()
+			self._lock = True
+			try:
+				# Set value
+				self._brightness = brightness
+				# Configure camera
+				if isinstance(self._camera, picamera.PiCamera):
+					self._camera.brightness = self._brightness
+				else:
+					self._camera.get(cv2.cv.CV_CAP_PROP_BRIGHTNESS, self._brightness)
+			except BaseException as baseerr:
+				self._brightness = None
+				self.log(["Failed to apply camera brightness:", baseerr])
+			self._lock = False
+
+	# Method: getCameraBrightness
+	def getCameraBrightness(self):
+		return self._brightness
+
+	# Method: setCameraSaturation
+	def setCameraSaturation(self, saturation):
+		if self.isCameraOn() and saturation is not None:
+			self._sync()
+			self._lock = True
+			try:
+				# Set value
+				self._saturation = saturation
+				# Configure camera
+				if isinstance(self._camera, picamera.PiCamera):
+					self._camera.saturation = self._saturation
+				else:
+					self._camera.get(cv2.cv.CV_CAP_PROP_SATURATION, self._saturation)
+			except BaseException as baseerr:
+				self._saturation = None
+				self.log(["Failed to apply camera saturation:", baseerr])
+			self._lock = False
+
+	# Method: getCameraSaturation
+	def getCameraSaturation(self):
+		return self._saturation
+
+	# Method: setCameraContrast
+	def setCameraContrast(self, contrast):
+		if self.isCameraOn() and contrast is not None:
+			self._sync()
+			self._lock = True
+			try:
+				# Set value
+				self._contrast = contrast
+				# Configure camera
+				if isinstance(self._camera, picamera.PiCamera):
+					self._camera.contrast = self._contrast
+				else:
+					self._camera.get(cv2.cv.CV_CAP_PROP_CONTRAST, self._contrast)
+			except BaseException as baseerr:
+				self._contrast = None
+				self.log(["Failed to apply camera contrast:", baseerr])
+			self._lock = False
+
+	# Method: getCameraContrast
+	def getCameraContrast(self):
+		return self._contrast
 
 	# Method: setCameraSleeptime
 	def setCameraSleeptime(self, sleeptime):
@@ -1126,8 +1195,14 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 				result += ', "' + StateData.Properties[4] + '":"' + ('default' if camera.getCameraResolution() is None else str(camera.getCameraResolution()[0]) + 'x' + str(camera.getCameraResolution()[1])) + '"'
 				# CameraFramerate
 				result += ', "' + StateData.Properties[5] + '":' + ('"default"' if camera.getCameraFramerate() is None else any2str(camera.getCameraFramerate()))
-				# CameraFramerate
-				result += ', "' + StateData.Properties[6] + '":' + ('"default"' if camera.getCameraFramerate() is None else any2str(camera.getCameraSleeptime()))
+				# CameraBrightness
+				result += ', "' + StateData.Properties[15] + '":' + ('"default"' if camera.getCameraBrightness() is None else any2str(camera.getCameraBrightness()))
+				# CameraSaturation
+				result += ', "' + StateData.Properties[16] + '":' + ('"default"' if camera.getCameraSaturation() is None else any2str(camera.getCameraSaturation()))
+				# CameraContrast
+				result += ', "' + StateData.Properties[17] + '":' + ('"default"' if camera.getCameraContrast() is None else any2str(camera.getCameraContrast()))
+				# CameraSleeptime
+				result += ', "' + StateData.Properties[6] + '":' + ('"default"' if camera.getCameraSleeptime() is None else any2str(camera.getCameraSleeptime()))
 				# CameraMotion
 				result += ', "' + StateData.Properties[3] + '":"' + ('On' if camera.isCameraMotionEnabled() else 'Off') + '"'
 				if camera.isCameraMotionEnabled():
@@ -1258,6 +1333,15 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 					# Evaluate CameraFramerate property
 					elif camprop.lower() == StateData.Properties[5].lower():
 						camera.setCameraFramerate(any2int(camdata))
+					# Evaluate CameraBrightness property
+					elif camprop.lower() == StateData.Properties[15].lower():
+						camera.setCameraBrightness(any2int(camdata))
+					# Evaluate CameraSaturation property
+					elif camprop.lower() == StateData.Properties[16].lower():
+						camera.setCameraSaturation(any2int(camdata))
+					# Evaluate CameraContrast property
+					elif camprop.lower() == StateData.Properties[17].lower():
+						camera.setCameraContrast(any2int(camdata))
 					# Evaluate CameraSleeptime property
 					elif camprop.lower() == StateData.Properties[6].lower():
 						camera.setCameraSleeptime(any2float(camdata))
@@ -1367,6 +1451,30 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 						# CameraFramerate
 						if service.get("CameraFramerate"):
 							jsonout = json.loads(self.runPropertySet(CameraId, "CameraFramerate", service["CameraFramerate"]))
+							if jsonout["achieved"]:
+								if result["set-properties"].count(jsonout["result"]["property"]) == 0:
+									result["set-properties"].append(jsonout["result"]["property"])
+							else:
+								msg += ('. ' + str(jsonout["message"]))
+						# CameraBrightness
+						if service.get("CameraBrightness"):
+							jsonout = json.loads(self.runPropertySet(CameraId, "CameraBrightness", service["CameraBrightness"]))
+							if jsonout["achieved"]:
+								if result["set-properties"].count(jsonout["result"]["property"]) == 0:
+									result["set-properties"].append(jsonout["result"]["property"])
+							else:
+								msg += ('. ' + str(jsonout["message"]))
+						# CameraSaturation
+						if service.get("CameraSaturation"):
+							jsonout = json.loads(self.runPropertySet(CameraId, "CameraSaturation", service["CameraSaturation"]))
+							if jsonout["achieved"]:
+								if result["set-properties"].count(jsonout["result"]["property"]) == 0:
+									result["set-properties"].append(jsonout["result"]["property"])
+							else:
+								msg += ('. ' + str(jsonout["message"]))
+						# CameraContrast
+						if service.get("CameraContrast"):
+							jsonout = json.loads(self.runPropertySet(CameraId, "CameraContrast", service["CameraContrast"]))
 							if jsonout["achieved"]:
 								if result["set-properties"].count(jsonout["result"]["property"]) == 0:
 									result["set-properties"].append(jsonout["result"]["property"])
@@ -1722,6 +1830,9 @@ class PiCamClient:
 				# Main Properties
 				text += '\n\t\t| CameraResolution: ' + ('default' if service["CameraResolution"] is None else any2str(service["CameraResolution"]))
 				text += '\n\t\t| CameraFramerate: ' + ('default' if service["CameraFramerate"] is None else any2str(service["CameraFramerate"]))
+				text += '\n\t\t| CameraBrightness: ' + ('default' if service["CameraBrightness"] is None else any2str(service["CameraBrightness"]))
+				text += '\n\t\t| CameraSaturation: ' + ('default' if service["CameraSaturation"] is None else any2str(service["CameraSaturation"]))
+				text += '\n\t\t| CameraContrast: ' + ('default' if service["CameraContrast"] is None else any2str(service["CameraContrast"]))
 				text += '\n\t\t| CameraSleeptime: ' + ('default' if service["CameraSleeptime"] is None else any2str(service["CameraSleeptime"]))
 				# Streaming
 				if service.get("CameraStreaming") and any2bool(service["CameraStreaming"]):
@@ -1794,6 +1905,15 @@ class PiCamClient:
 							# CameraFramerate
 							if service.get("CameraFramerate") and service["CameraFramerate"] != "default":
 								content.append("set property CameraFramerate=" + any2str(service["CameraFramerate"]) + CameraId)
+							# CameraBrightness
+							if service.get("CameraBrightness") and service["CameraBrightness"] != "default":
+								content.append("set property CameraBrightness=" + any2str(service["CameraBrightness"]) + CameraId)
+							# CameraSaturation
+							if service.get("CameraSaturation") and service["CameraSaturation"] != "default":
+								content.append("set property CameraSaturation=" + any2str(service["CameraSaturation"]) + CameraId)
+							# CameraContrast
+							if service.get("CameraContrast") and service["CameraContrast"] != "default":
+								content.append("set property CameraContrast=" + any2str(service["CameraContrast"]) + CameraId)
 							# CameraSleeptime
 							if service.get("CameraSleeptime") and service["CameraSleeptime"] != "default":
 								content.append("set property CameraSleeptime=" + any2str(service["CameraSleeptime"]) + CameraId)
@@ -1856,7 +1976,8 @@ class StateData:
 	Subjects = ['server', 'service', 'property']
 	Properties = ['CameraId', 'CameraStatus', 'CameraStreaming', 'CameraMotion', 'CameraResolution', 'CameraFramerate',
 				  'CameraSleeptime', 'MotionContour', 'CameraRecording', 'RecordingFormat', 'MotionThreshold',
-				  'RecordingLocation', 'StreamingPort', 'StreamingSleeptime', 'MotionSympathy']
+				  'RecordingLocation', 'StreamingPort', 'StreamingSleeptime', 'MotionSympathy',
+				  'CameraBrightness', 'CameraSaturation', 'CameraContrast']
 	Articles = ['@', 'at', 'on', 'in', 'to', 'from']
 
 	# Constructor
