@@ -232,13 +232,15 @@ class Camera(threading.Thread):
 				frame = self.frame
 				# Process current frame
 				if frame is not None:
-					# If motion detection feature is active run it to detect motion
+					# Input service: motion detection
 					if self.isCameraMotionOn():
 						self._motion.run(frame)
-					# If recording feature is active run it to record images or videos
+					# Between Input and Output services needs to interfere a decision engine
+					self._orchestrate(frame)
+					# Output service: recording frames in video or images
 					if self.isCameraRecordingOn():
 						self._record.run(frame)
-					# If the streaming is active send the picture through the streaming channel
+					# Output service: streaming frames to HTTP
 					if self.isCameraStreamingOn():
 						self._stream.run(frame)
 					# Release the captured frame
@@ -508,6 +510,21 @@ class Camera(threading.Thread):
 	def getStreamingSleep(self):
 		return self._stream.getStreamingSleep()
 
+	# Method: _orchestrate
+	def _orchestrate(self, frame):
+		# R1: when motion and recording are running try to record only motions
+		if self._motion.isRunning() and self._record.isRunning():
+			if self._motion.isMotion():
+				self._record.setMessage("Motion detected")
+				self._record.setPaused(False)
+			else:
+				if (self._record.getLastRecordingDatetime() - self._motion.getLastMotionDatetime()).total_seconds() < 10:
+					self._record.setMessage("Motion expected")
+					self._record.setPaused(False)
+				else:
+					#self._record.setMessage("Waiting for motion")
+					self._record.setPaused(True)
+
 
 # Class: CamService
 class CamService:
@@ -593,6 +610,10 @@ class MotionService(CamService):
 	def isMotion(self):
 		return self.__ismot
 
+	# Method: getLastMotionDatetime
+	def getLastMotionDatetime(self):
+		return self.__dtmot
+
 	# Method: run
 	def run(self, frame):
 		# Validate input frame
@@ -616,10 +637,13 @@ class MotionService(CamService):
 		# Preserve the gray image for next comparison
 		self.__gray = gray
 		# Check contour(s) and identify motion
-		if contours is not None and contours:
+		if contours is None or not contours:
+			self.__ismot = False
+		else:
+			snapshot = False
 			for contour in contours:
-				self.__ismot = cv2.contourArea(contour) >= self.getThreshold()
-				if self.__ismot:
+				snapshot |= cv2.contourArea(contour) >= self.getThreshold()
+				if snapshot:
 					# Record motion date/time
 					self.__dtmot = datetime.datetime.now()
 					# Compute the bounding box for the contour, draw it on the frame, and update the text
@@ -628,8 +652,7 @@ class MotionService(CamService):
 						xr = numpy.size(frame, 1) / 320
 						yr = numpy.size(frame, 0) / 240
 						cv2.rectangle(frame, (xr * x, yr * y), (xr * (x + w), yr * (y + h)), (0, 255, 0), 1)
-			else:
-				self.__ismot = False
+			self.__ismot = snapshot
 
 
 # Class: RecordingService
@@ -662,6 +685,8 @@ class RecordingService(CamService):
 		self.__nerr = 0
 		# No of frames included into a video file
 		self.__nfrm = 0
+		# Last recording datetime
+		self.__dtrec = None
 
 	# Method: start
 	def start(self):
@@ -702,6 +727,7 @@ class RecordingService(CamService):
 		self.__fref = None
 		self.__nerr = 0
 		self.__nfrm = 0
+		self.__dtrec = datetime.datetime.now()
 
 	# Method: getFormat
 	def getFormat(self):
@@ -744,6 +770,7 @@ class RecordingService(CamService):
 
 	# Method: _writevideo
 	def _writevideo(self, frame):
+		self.__dtrec = datetime.datetime.now()
 		self.__oref.write(frame)
 		self.__nfrm += 1
 
@@ -755,8 +782,13 @@ class RecordingService(CamService):
 
 	# Method: _writeimage
 	def _writeimage(self, frame):
+		self.__dtrec = datetime.datetime.now()
 		cv2.imwrite(self.__fref, frame)
 		self.__nfrm += 1
+
+	# Method: getLastMotionDatetime
+	def getLastRecordingDatetime(self):
+		return self.__dtrec
 
 	# Method: run
 	def run(self, frame):
