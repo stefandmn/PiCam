@@ -157,15 +157,15 @@ class Camera(threading.Thread):
 		else:
 			self.log("Camera service is already stopped", "WARN")
 
-	# Method: islocked
+	# Method: __islocked
 	def __islocked(self):
 		return self._lock
 
-	# Method: islocked
+	# Method: __isunlocked
 	def __isunlocked(self):
 		return not self.__islocked()
 
-	# Method: lock
+	# Method: __lock
 	def __lock(self):
 		# Wait until locking will disappear
 		while self.__islocked():
@@ -176,7 +176,7 @@ class Camera(threading.Thread):
 		# Set locking flag
 		self._lock = True
 
-	# Method: unlock
+	# Method: __unlock
 	def __unlock(self):
 		self._lock = False
 
