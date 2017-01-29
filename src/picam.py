@@ -15,6 +15,7 @@ import cv2
 import sys
 import time
 import json
+import time
 import numpy
 import socket
 import getopt
@@ -60,22 +61,22 @@ class Camera(threading.Thread):
 		# Initialize class public variables (class parameters)
 		self._id = id
 		self._sleeptime = Camera.Sleeptime
-		self._resolution = None
-		self._framerate = None
+		self._resolution = (640,480)
+		self._framerate = 32
 		self._brightness = None
 		self._saturation = None
 		self._contrast = None
 		# Initialize class private variables
 		self._exec = False
 		self._lock = False
-		# Define tools
+		# Initialize camera services
 		self._camera = None
 		self._motion = MotionService(self)
 		self._stream = StreamingService(self)
 		self._record = RecordingService(self)
-		# Identify type of camera and initialize camera device
+		# Open camera
 		self.setCameraOn()
-		# Activate recording if was specified during initialization
+		# Start camera services depending by input parameters
 		if motion:
 			self._motion.start()
 		if recording:
@@ -96,17 +97,39 @@ class Camera(threading.Thread):
 	# Method: setCameraOn
 	def setCameraOn(self):
 		if self._camera is None:
-			self._sync()
-			self._lock = True
+			self.__lock()
 			try:
 				if self._id == 0:
 					self._camera = PiCamera()
+					# Set camera properties
+					if self._resolution is not None:
+						self._camera.resolution = self._resolution
+					if self._framerate is not None:
+						self._camera.framerate = self._framerate
+					if self._brightness is not None:
+						self._camera.brightness = self._brightness
+					if self._saturation is not None:
+						self._camera.saturation = self._saturation
+					if self._contrast is not None:
+						self._camera.contrast = self._contrast
 				else:
 					self._camera = cv2.VideoCapture(self._id - 1)
+					# Set camera properties
+					if self._resolution is not None:
+						self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, self._resolution[0])
+						self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self._resolution[1])
+					if self._framerate is not None:
+						self._camera.set(cv2.CAP_PROP_FPS, self._framerate)
+					if self._brightness is not None:
+						self._camera.set(cv2.CAP_PROP_BRIGHTNESS, self._brightness)
+					if self._saturation is not None:
+						self._camera.set(cv2.CAP_PROP_SATURATION, self._saturation)
+					if self._contrast is not None:
+						self._camera.set(cv2.CAP_PROP_CONTRAST, self._contrast)
 			except BaseException as baseerr:
 				self._camera = None
 				self.log(["Camera service initialization failed:", baseerr])
-			self._lock = False
+			self.__unlock()
 		else:
 			self.log("Camera service is already started", "WARN")
 
@@ -117,34 +140,50 @@ class Camera(threading.Thread):
 	# Method: setCameraOff
 	def setCameraOff(self):
 		if self._camera is not None:
-			self._sync()
-			self._lock = True
+			self.__lock()
 			try:
 				# For PiCamera call close method
 				if isinstance(self._camera, PiCamera):
 					self._camera.close()
+				else:
+					self._camera.release()
 				# Destroy Camera instance
 				del self._camera
 				self._camera = None
 			except BaseException as baseerr:
 				self._camera = None
 				self.log(["Camera service has been stopped with errors:", baseerr])
-			self._lock = False
+			self.__unlock()
 		else:
 			self.log("Camera service is already stopped", "WARN")
 
-	# Method: sync
-	def _sync(self):
+	# Method: islocked
+	def __islocked(self):
+		return self._lock
+
+	# Method: islocked
+	def __isunlocked(self):
+		return not self.__islocked()
+
+	# Method: lock
+	def __lock(self):
 		# Wait until locking will disappear
-		while self._lock:
+		while self.__islocked():
 			if self._sleeptime > 0:
 				time.sleep(self._sleeptime)
 			else:
 				time.sleep(Camera.Sleeptime)
+		# Set locking flag
+		self._lock = True
+
+	# Method: unlock
+	def __unlock(self):
+		self._lock = False
 
 	# Method: getFrame
-	def getFrame(self):
-		if self.isCameraOn():
+	@property
+	def frame(self):
+		if self.isCameraOn() and self.__isunlocked():
 			# Create new frame based on camera type
 			try:
 				if isinstance(self._camera, PiCamera):
@@ -190,7 +229,7 @@ class Camera(threading.Thread):
 		while self._exec:
 			try:
 				# Capture next frame
-				frame = self.getFrame()
+				frame = self.frame
 				# Process current frame
 				if frame is not None:
 					# If motion detection feature is active run it to detect motion
@@ -202,11 +241,12 @@ class Camera(threading.Thread):
 					# If the streaming is active send the picture through the streaming channel
 					if self.isCameraStreamingOn():
 						self._stream.run(frame)
+					# Release the captured frame
+					del frame
+					frame = None
 				# Sleep for couple of seconds or milliseconds
 				if self._sleeptime > 0:
 					time.sleep(self._sleeptime)
-				# Release the captured frame
-				del frame
 			except BaseException as baserr:
 				self.log(["Camera workflow failed:", baserr])
 				self.stop()
@@ -230,124 +270,104 @@ class Camera(threading.Thread):
 				print "%s | %s %s > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), type, self.name, message)
 
 	# Method: setCameraResolution
-	def setCameraResolution(self, resolution):
-		if self.isCameraOn() and resolution is not None:
-			self._sync()
-			self._lock = True
-			try:
-				# Set value
-				if resolution.find(",") > 0:
-					self._resolution = (int(resolution.split(',')[0].strip()), int(resolution.split(',')[1].strip()))
-				elif resolution.lower().find("x") > 0:
-					self._resolution = (int(resolution.lower().split('x')[0].strip()), int(resolution.lower().split('x')[1].strip()))
-				else:
-					raise RuntimeError("Undefined camera resolution value: " + str(resolution))
-				# Configure camera
-				if isinstance(self._camera, PiCamera):
-					self._camera.resolution = self._resolution
-				else:
-					self._camera.get(cv2.cv.CV_CAP_PROP_FRAME_WIDTH, self._resolution[0])
-					self._camera.get(cv2.cv.CV_CAP_PROP_FRAME_HEIGHT, self._resolution[1])
-			except Exception as err:
-				self._resolution = None
-				self.log(["Failed to apply camera resolution:", err])
-			self._lock = False
+	def setCameraResolution(self, value):
+		# Set new value
+		if isinstance(value, str):
+			if value.find(",") > 0:
+				self._resolution = (int(value.split(',')[0].strip()), int(value.split(',')[1].strip()))
+			elif value.lower().find("x") > 0:
+				self._resolution = (int(value.lower().split('x')[0].strip()), int(value.lower().split('x')[1].strip()))
+			else:
+				raise RuntimeError("Undefined camera resolution value: " + str(value))
+		elif isinstance(value, tuple):
+			self._resolution = value
+		else:
+			raise RuntimeError("Invalid type of format for camera resolution: " + str(value))
+		# Apply new value
+		if self.isCameraOn():
+			self.__lock()
+			if self._id == 0:
+				self._camera.resolution = self._resolution
+			else:
+				self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, self._resolution[0])
+				self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self._resolution[1])
+			self.__unlock()
 
 	# Method: getCameraResolution
 	def getCameraResolution(self):
 		return self._resolution
 
 	# Method: setCameraFramerate
-	def setCameraFramerate(self, framerate):
-		if self.isCameraOn() and framerate is not None:
-			self._sync()
-			self._lock = True
-			try:
-				# Set value
-				self._framerate = framerate
-				# Configure camera
-				if isinstance(self._camera, PiCamera):
-					self._camera.framerate = self._framerate
-				else:
-					self._camera.get(cv2.cv.CV_CAP_PROP_FPS, self._framerate)
-			except Exception as err:
-				self._framerate = None
-				self.log(["Failed to apply camera framerate:", err])
-			self._lock = False
+	def setCameraFramerate(self, value):
+		# Set new value
+		self._framerate = any2int(value)
+		# Apply new value
+		if self.isCameraOn():
+			self.__lock()
+			if self._id == 0:
+				self._camera.framerate = self._framerate
+			else:
+				self._camera.set(cv2.CAP_PROP_FPS, self._framerate)
+			self.__unlock()
 
 	# Method: getCameraFramerate
 	def getCameraFramerate(self):
 		return self._framerate
 
 	# Method: setCameraBrightness
-	def setCameraBrightness(self, brightness):
-		if self.isCameraOn() and brightness is not None:
-			self._sync()
-			self._lock = True
-			try:
-				# Set value
-				self._brightness = brightness
-				# Configure camera
-				if isinstance(self._camera, PiCamera):
-					self._camera.brightness = self._brightness
-				else:
-					self._camera.get(cv2.cv.CV_CAP_PROP_BRIGHTNESS, self._brightness)
-			except Exception as err:
-				self._brightness = None
-				self.log(["Failed to apply camera brightness:", err])
-			self._lock = False
+	def setCameraBrightness(self, value):
+		# Set new value
+		self._brightness = any2float(value)
+		# Apply new value
+		if self.isCameraOn():
+			self.__lock()
+			if self._id == 0:
+				self._camera.brightness = self._brightness
+			else:
+				self._camera.set(cv2.CAP_PROP_BRIGHTNESS, self._brightness)
+			self.__unlock()
 
 	# Method: getCameraBrightness
 	def getCameraBrightness(self):
 		return self._brightness
 
 	# Method: setCameraSaturation
-	def setCameraSaturation(self, saturation):
-		if self.isCameraOn() and saturation is not None:
-			self._sync()
-			self._lock = True
-			try:
-				# Set value
-				self._saturation = saturation
-				# Configure camera
-				if isinstance(self._camera, PiCamera):
-					self._camera.saturation = self._saturation
-				else:
-					self._camera.get(cv2.cv.CV_CAP_PROP_SATURATION, self._saturation)
-			except Exception as err:
-				self._saturation = None
-				self.log(["Failed to apply camera saturation:", err])
-			self._lock = False
+	def setCameraSaturation(self, value):
+		# Set new value
+		self._saturation = any2float(value)
+		# Apply new value
+		if self.isCameraOn():
+			self.__lock()
+			if self._id == 0:
+				self._camera.saturation = self._saturation
+			else:
+				self._camera.set(cv2.CAP_PROP_SATURATION, self._saturation)
+			self.__unlock()
 
 	# Method: getCameraSaturation
 	def getCameraSaturation(self):
 		return self._saturation
 
 	# Method: setCameraContrast
-	def setCameraContrast(self, contrast):
-		if self.isCameraOn() and contrast is not None:
-			self._sync()
-			self._lock = True
-			try:
-				# Set value
-				self._contrast = contrast
-				# Configure camera
-				if isinstance(self._camera, PiCamera):
-					self._camera.contrast = self._contrast
-				else:
-					self._camera.get(cv2.cv.CV_CAP_PROP_CONTRAST, self._contrast)
-			except Exception as err:
-				self._contrast = None
-				self.log(["Failed to apply camera contrast:", err])
-			self._lock = False
+	def setCameraContrast(self, value):
+		# Set new value
+		self._contrast = any2float(value)
+		# Apply new value
+		if self.isCameraOn():
+			self.__lock()
+			if self._id == 0:
+				self._camera.contrast = self._contrast
+			else:
+				self._camera.set(cv2.CAP_PROP_CONTRAST, self._contrast)
+			self.__unlock()
 
 	# Method: getCameraContrast
 	def getCameraContrast(self):
 		return self._contrast
 
 	# Method: setCameraSleeptime
-	def setCameraSleeptime(self, sleeptime):
-		self._sleeptime = sleeptime
+	def setCameraSleeptime(self, value):
+		self._sleeptime = value
 
 	# Method: getCameraSleeptime
 	def getCameraSleeptime(self):
@@ -369,24 +389,24 @@ class Camera(threading.Thread):
 			self.log("Motion Detection function is not activated", "WARN")
 
 	# Method: setMotionThreshold
-	def setMotionThreshold(self, threshold):
-		self._motion.setThreshold(threshold)
+	def setMotionThreshold(self, value):
+		self._motion.setThreshold(value)
 
 	# Method: getMotionThreshold
 	def getMotionThreshold(self):
 		return self._motion.getThreshold()
 
 	# Method: setMotionContour
-	def setMotionContour(self, contour):
-		self._motion.setContour(contour)
+	def setMotionContour(self, value):
+		self._motion.setContour(value)
 
 	# Method: getMotionContour
 	def getMotionContour(self):
 		return self._motion.isContourEnabled()
 
 	# Method: setMotionSympathy
-	def setMotionSympathy(self, sympathy):
-		self._motion.setSympathy(sympathy)
+	def setMotionSympathy(self, value):
+		self._motion.setSympathy(value)
 
 	# Method: getMotionSympathy
 	def getMotionSympathy(self):
@@ -403,47 +423,50 @@ class Camera(threading.Thread):
 	# Method: setCameraRecording
 	def setCameraRecording(self, flag):
 		if not self.isCameraRecordingOn() and flag:
-			self._sync()
+			self.__lock()
 			self._record.start()
+			self.__unlock()
 		elif self.isCameraRecordingOn() and not flag:
+			self.__lock()
 			self._record.stop()
+			self.__unlock()
 		elif self.isCameraRecordingOn() and flag:
 			self.log("Recording function is already activated", "WARN")
 		elif not self.isCameraRecordingOn() and not flag:
 			self.log("Recording function is not activated", "WARN")
 
 	# Method: setRecordingLocation
-	def setRecordingLocation(self, location):
+	def setRecordingLocation(self, value):
 		if self.isCameraRecordingOn():
 			self._record.stop()
-			self._record.setLocation(location)
+			self._record.setLocation(value)
 			self._record.start()
 		else:
-			self._record.setLocation(location)
+			self._record.setLocation(value)
 
 	# Method: getRecordingLocation
 	def getRecordingLocation(self):
 		return self._record.getLocation()
 
 	# Method: setRecordingFormat
-	def setRecordingFormat(self, format):
+	def setRecordingFormat(self, value):
 		if self.isCameraRecordingOn():
 			self._record.calibrate()
-			self._record.setFormat(format)
+			self._record.setFormat(value)
 		else:
-			self._record.setFormat(format)
+			self._record.setFormat(value)
 
 	# Method: getRecordingFormat
 	def getRecordingFormat(self):
 		return self._record.getFormat()
 
 	# Method: setRecordingMessage
-	def setRecordingMessage(self, text):
-		self._record.setMessage(text)
+	def setRecordingMessage(self, value):
+		self._record.setMessage(value)
 
 	# Method: setRecordingSkip
-	def setRecordingPause(self, skip):
-		self._record.setPaused(skip)
+	def setRecordingPause(self, value):
+		self._record.setPaused(value)
 
 	# Method: isRecordingSkipped
 	def isRecordingPaused(self):
@@ -465,21 +488,21 @@ class Camera(threading.Thread):
 			self.log("Streaming function is not activated", "WARN")
 
 	# Method: setStreamingPort
-	def setStreamingPort(self, port):
+	def setStreamingPort(self, value):
 		if self.isCameraStreamingOn():
 			self._stream.stop()
-			self._stream.setStreamingPort(port)
+			self._stream.setStreamingPort(value)
 			self._stream.start()
 		else:
-			self._stream.setStreamingPort(port)
+			self._stream.setStreamingPort(value)
 
 	# Method: getStreamingPort
 	def getStreamingPort(self):
 		return self._stream.getStreamingPort()
 
 	# Method: setStreamingSleep
-	def setStreamingSleep(self, sleep):
-		self._stream.setStreamingSleep(sleep)
+	def setStreamingSleep(self, value):
+		self._stream.setStreamingSleep(value)
 
 	# Method: getStreamingSleep
 	def getStreamingSleep(self):
@@ -573,7 +596,7 @@ class MotionService(CamService):
 	# Method: run
 	def run(self, frame):
 		# Validate input frame
-		if frame is None:
+		if frame is None or not self.isRunning():
 			return
 		# Resize the frame, convert it to grayscale, and blur it
 		gray = cv2.resize(frame, (320,240))
@@ -589,7 +612,7 @@ class MotionService(CamService):
 		thresh = cv2.threshold(delta, self.getSympathy(), 255, cv2.THRESH_BINARY)[1]
 		# Dilate the the thresholded image to fill in holes, then find contours on thresholded image
 		thresh = cv2.dilate(thresh, None, iterations=2)
-		(contours, _) = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+		(_, contours,_) = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 		# Preserve the gray image for next comparison
 		self.__gray = gray
 		# Check contour(s) and identify motion
@@ -716,7 +739,7 @@ class RecordingService(CamService):
 	def _initvideo(self, frame):
 		self._closevideo()
 		self.__nfrm = 0
-		self.__oref = cv2.VideoWriter(self.__fref, cv2.cv.CV_FOURCC('M', 'P', '4', '2'), self.__freq, (numpy.size(frame, 1), numpy.size(frame, 0)), True)
+		self.__oref = cv2.VideoWriter(self.__fref, cv2.VideoWriter_fourcc(*'MP42'), self.__freq, (numpy.size(frame, 1), numpy.size(frame, 0)), True)
 		self._writevideo(frame)
 
 	# Method: _writevideo
@@ -737,8 +760,8 @@ class RecordingService(CamService):
 
 	# Method: run
 	def run(self, frame):
-		# Run recording workflow
-		if self.isPaused() or self.isNotRunning() or self.__alrt:
+		# Validate input frame and workflow flags
+		if frame is None or self.isPaused() or self.isNotRunning() or self.__alrt:
 			return
 		# Define file name for calibration samples
 		if self.__clbr:

@@ -26,7 +26,7 @@ class MyHandler(BaseHTTPRequestHandler):
 			self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=--BOUNDARYSTRING")
 			self.end_headers()			
 			while True:
-				if self._server.getData() is None:
+				if self._server.getFrame() is None:
 					continue
 				JpegData = cv.EncodeImage(".jpeg", self._server.getData(), (cv.CV_IMWRITE_JPEG_QUALITY, 75)).tostring()
 				
@@ -50,6 +50,8 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 	def __init__(self, server_address, handler, bind_and_activate=True, sleeptime=0.05):
 		HTTPServer.__init__(self, server_address, handler, bind_and_activate=bind_and_activate)
 		self.capture = cv.CaptureFromCAM(0)
+		#cv.SetCaptureProperty(self.capture, cv.CV_CAP_PROP_FRAME_WIDTH, 640)
+		#cv.SetCaptureProperty(self.capture, cv.CV_CAP_PROP_FRAME_HEIGHT, 480)
 		self.sleeptime = sleeptime
 
 	#Method: getFrame
@@ -62,6 +64,6 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 
 
 if __name__=="__main__":
-	server = ThreadedHTTPServer(('0.0.0.0', 8080), MyHandler, sleeptime=0.01)
+	server = ThreadedHTTPServer(('0.0.0.0', 9081), MyHandler, sleeptime=0.01)
 	print 'Starting Streaming Server...'
 	server.serve_forever()

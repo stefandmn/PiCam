@@ -76,12 +76,12 @@ class StreamingServer(ThreadingMixIn, HTTPServer):
 
 def main():
 	capture = cv2.VideoCapture(0)
-	capture.set(cv2.cv.CV_CAP_PROP_FRAME_WIDTH, 640) 
+	capture.set(cv2.cv.CV_CAP_PROP_FRAME_WIDTH, 640)
 	capture.set(cv2.cv.CV_CAP_PROP_FRAME_HEIGHT, 480)
-	capture.set(cv2.cv.CV_CAP_PROP_BRIGHTNESS, 0.5)
-	capture.set(cv2.cv.CV_CAP_PROP_CONTRAST, 0.5)
+	#capture.set(cv2.cv.CV_CAP_PROP_BRIGHTNESS, 1)
+	#capture.set(cv2.cv.CV_CAP_PROP_CONTRAST, 1)
 
-	server = StreamingServer(('0.0.0.0', 9081), StreamHandler, frame=None, sleep=0.02)
+	server = StreamingServer(('0.0.0.0', 9081), StreamHandler, frame=None, sleep=0.01)
 
 	try:
 		streamthread = threading.Thread(target=server.serve_forever)
