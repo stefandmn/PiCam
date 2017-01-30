@@ -667,7 +667,7 @@ class RecordingService(CamService):
 	def __init__(self, camera, start=False):
 		CamService.__init__(self, camera, start=start)
 		self._format = 'image'
-		self._codec = 'MP42'
+		self._encoder = 'MP42'
 		self._location = '/tmp'
 		# Pause flag to temporary stop the recording workflow
 		self._pause = False
@@ -719,6 +719,14 @@ class RecordingService(CamService):
 			elif format.lower() in ("video", "movie", "v", "m"):
 				self._format = 'video'
 
+	# Method: getEncoder
+	def getEncoder(self):
+		return self._encoder
+
+	# Method: setEncoder
+	def setEncoder(self, encoder):
+		self._encoder = encoder
+
 	# Method: getLocation
 	def getLocation(self):
 		return self._location
@@ -752,12 +760,13 @@ class RecordingService(CamService):
 				self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0') + "-calibration-sample.avi"
 			else:
 				self.__fref = self._location + time.strftime("/%Y/%m/%d/", time.localtime())
-				os.makedirs(self.__fref)
+				if not os.path.exists(self.__fref):
+					os.makedirs(self.__fref)
 				self.__fref += os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
 				self.__fref += "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".avi"
-			codec = cv2.VideoWriter_fourcc(*self._codec)
-			resol = (numpy.size(frame, 1), numpy.size(frame, 0))
-			self.__oref = cv2.VideoWriter(self.__fref, codec, self._recfq, resol, True)
+			encoder = cv2.VideoWriter_fourcc(*self._encoder)
+			resolut = (numpy.size(frame, 1), numpy.size(frame, 0))
+			self.__oref = cv2.VideoWriter(self.__fref, encoder, self._recfq, resolut, True)
 		self._dtrec = datetime.datetime.now()
 		self.__oref.write(frame)
 		self._nofrm += 1
@@ -770,7 +779,8 @@ class RecordingService(CamService):
 				self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0') +  "-calibration-sample.png"
 			else:
 				self.__fref = self._location + time.strftime("/%Y/%m/%d/%H", time.localtime())
-				os.makedirs(self.__fref)
+				if not os.path.exists(self.__fref):
+					os.makedirs(self.__fref)
 				self.__fref += os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
 				self.__fref += "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
 				self.__fref += ".png"
@@ -960,10 +970,10 @@ class RegulationService(CamService):
 				self._camera.setRecordingPause(False)
 			else:
 				if (self._camera.getRecordingLastTimestamp() - self._camera.getMotionLastTimestamp()).total_seconds() < 10:
-					self._camera.setRecordingMessage("Motion standby")
+					self._camera.setRecordingMessage("Motion stand-by")
 					self._camera.setRecordingPause(False)
 				else:
-					self._camera.setFrameLabel(frame, "Waiting for motion")
+					self._camera.setFrameLabel(frame, "Waiting motion")
 					self._camera.setRecordingPause(True)
 
 	# Method: run
@@ -1895,7 +1905,7 @@ class PiCamClient:
 				# Motion Detection
 				if service.get("CameraMotion") and any2bool(service["CameraMotion"]):
 					text += '\n\t\t| CameraMotion: On'
-					text += '\n\t\t\t|| MotionContour: ' + ('On' if service["MotionContour"] else 'Off')
+					text += '\n\t\t\t|| MotionContour: ' + ('On' if any2bool(service["MotionContour"]) else 'Off')
 					text += '\n\t\t\t|| MotionThreshold: ' + any2str(service["MotionThreshold"])
 					text += '\n\t\t\t|| MotionSympathy: ' + any2str(service["MotionSympathy"])
 				elif service.get("CameraMotion") and not any2bool(service["CameraMotion"]):
