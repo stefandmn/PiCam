@@ -36,7 +36,6 @@ except:
 
 # Class: Camera
 class Camera(threading.Thread):
-
 	# Constants
 	Sleeptime = 0.05
 	StreamInterface = '0.0.0.0'
@@ -83,6 +82,9 @@ class Camera(threading.Thread):
 			self._record.start()
 		if streaming:
 			self._stream.start()
+		# Initialize and start ruling engine
+		self._ruling = RegulationService(self, start=True)
+		# Logging initialization phase for teh camera instance
 		self.log("Service has been initialized")
 
 	# Property: id
@@ -236,7 +238,7 @@ class Camera(threading.Thread):
 					if self.isCameraMotionOn():
 						self._motion.run(frame)
 					# Between Input and Output services needs to interfere a decision engine
-					self._orchestrate(frame)
+					self._ruling.run(frame)
 					# Output service: recording frames in video or images
 					if self.isCameraRecordingOn():
 						self._record.run(frame)
@@ -418,6 +420,10 @@ class Camera(threading.Thread):
 	def isMotionDetected(self):
 		return self._motion.isMotion()
 
+	# Method: getMotionLastTimestamp
+	def getMotionLastTimestamp(self):
+		return self._motion.getLastTimestamp()
+
 	# Method: isRecordingEnabled
 	def isCameraRecordingOn(self):
 		return self._record.isRunning()
@@ -453,7 +459,7 @@ class Camera(threading.Thread):
 	# Method: setRecordingFormat
 	def setRecordingFormat(self, value):
 		if self.isCameraRecordingOn():
-			self._record.calibrate()
+			self._record.calibrate(init=True)
 			self._record.setFormat(value)
 		else:
 			self._record.setFormat(value)
@@ -468,11 +474,19 @@ class Camera(threading.Thread):
 
 	# Method: setRecordingSkip
 	def setRecordingPause(self, value):
-		self._record.setPaused(value)
+		self._record.setPause(value)
 
 	# Method: isRecordingSkipped
 	def isRecordingPaused(self):
 		return self._record.isPaused()
+
+	# Method: isRecordingCalibration
+	def isRecordingCalibration(self):
+		return self._record.isCalibrating()
+
+	# Method: getRecordingLastTimestamp
+	def getRecordingLastTimestamp(self):
+		return self._record.getLastTimestamp()
 
 	# Method: isCameraStreamingOn
 	def isCameraStreamingOn(self):
@@ -510,25 +524,14 @@ class Camera(threading.Thread):
 	def getStreamingSleep(self):
 		return self._stream.getStreamingSleep()
 
-	# Method: _orchestrate
-	def _orchestrate(self, frame):
-		# R1: when motion and recording are running try to record only motions
-		if self._motion.isRunning() and self._record.isRunning():
-			if self._motion.isMotion():
-				self._record.setMessage("Motion detected")
-				self._record.setPaused(False)
-			else:
-				if (self._record.getLastRecordingDatetime() - self._motion.getLastMotionDatetime()).total_seconds() < 10:
-					self._record.setMessage("Motion expected")
-					self._record.setPaused(False)
-				else:
-					#self._record.setMessage("Waiting for motion")
-					self._record.setPaused(True)
-
+	# Method: setFrameText
+	def setFrameLabel(self, frame, text):
+		if frame is not None and text is not None:
+			message = text + " @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
+			cv2.putText(frame, message, (10, numpy.size(frame, 0) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255))
 
 # Class: CamService
 class CamService:
-
 	# Constructor
 	def __init__(self, camera, start=False):
 		self._running = False
@@ -610,8 +613,8 @@ class MotionService(CamService):
 	def isMotion(self):
 		return self.__ismot
 
-	# Method: getLastMotionDatetime
-	def getLastMotionDatetime(self):
+	# Method: getLastTimestamp
+	def getLastTimestamp(self):
 		return self.__dtmot
 
 	# Method: run
@@ -640,9 +643,10 @@ class MotionService(CamService):
 		if contours is None or not contours:
 			self.__ismot = False
 		else:
-			snapshot = False
+			motion = False
 			for contour in contours:
-				snapshot |= cv2.contourArea(contour) >= self.getThreshold()
+				snapshot = cv2.contourArea(contour) >= self.getThreshold()
+				motion |= snapshot
 				if snapshot:
 					# Record motion date/time
 					self.__dtmot = datetime.datetime.now()
@@ -652,7 +656,9 @@ class MotionService(CamService):
 						xr = numpy.size(frame, 1) / 320
 						yr = numpy.size(frame, 0) / 240
 						cv2.rectangle(frame, (xr * x, yr * y), (xr * (x + w), yr * (y + h)), (0, 255, 0), 1)
-			self.__ismot = snapshot
+					else:
+						break
+			self.__ismot = motion
 
 
 # Class: RecordingService
@@ -661,43 +667,34 @@ class RecordingService(CamService):
 	def __init__(self, camera, start=False):
 		CamService.__init__(self, camera, start=start)
 		self._format = 'image'
+		self._codec = 'MP42'
 		self._location = '/tmp'
-		# Flag for motion detection suspend and resume functions and also to stop recording when resources are not enough
-		self.__wfps = False
-		# Flag that identifies if the system received an alert from resource monitors (memory, processor, disk, etc.)
-		self.__alrt = False
-		# Calibration flag
+		# Pause flag to temporary stop the recording workflow
+		self._pause = False
+		# Calibration flag to run calibration workflow
 		self.__clbr = False
-		# Calibration start date/time
-		self.__cldt = None
 		# Recording message
 		self.__text = None
 		# Recording references: file name and file handler
 		self.__oref = None
 		self.__fref = None
-		# Resources info: disk, cpu, memory
-		self.__rinf = None
-		# Detected frame frequency (image or video)
-		self.__freq = 2
-		# Detected frame size (image or video)
-		self.__size = 325
+		# Recording frequency (image or video)
+		self._recfq = 2
+		# Recording frame size (image or video)
+		self._fsize = 325
 		# No of consecutive errors
 		self.__nerr = 0
-		# No of frames included into a video file
-		self.__nfrm = 0
+		# No of frames counted for a recording session
+		self._nofrm = 0
 		# Last recording datetime
-		self.__dtrec = None
+		self._dtrec = None
 
 	# Method: start
 	def start(self):
 		# Run calibration
-		self.calibrate()
+		self.calibrate(init=True)
 		# Activate service
 		CamService.start(self)
-		# Start disk watchdog
-		self.resthread = threading.Thread(target=self.checkResources)
-		self.resthread.daemon = True
-		self.resthread.start()
 
 	# Method: stop
 	def stop(self):
@@ -707,27 +704,8 @@ class RecordingService(CamService):
 			self.__oref = None
 		# Reset file reference
 		self.__fref = None
-		# Close video (if is activated)
-		self._closevideo()
 		# Deactivate service
 		CamService.stop(self)
-		# Stop check resources thread
-		self.resthread.terminate()
-		self.resthread = None
-
-	# Method: calibration
-	def calibrate(self):
-		self.__clbr = True
-		self.__cldt = datetime.datetime.now()
-		self.__freq = 2
-		self.__size = 0
-		self.__wfps = False
-		self.__alrt = False
-		self.__oref = None
-		self.__fref = None
-		self.__nerr = 0
-		self.__nfrm = 0
-		self.__dtrec = datetime.datetime.now()
 
 	# Method: getFormat
 	def getFormat(self):
@@ -754,101 +732,118 @@ class RecordingService(CamService):
 		self.__text = text
 
 	# Method: setPaused
-	def setPaused(self, pause):
-		self.__wfps = pause
+	def setPause(self, pause):
+		self._pause = pause
 
 	# Method: isPaused
 	def isPaused(self):
-		return self.__wfps
-
-	# Method: _initvideo
-	def _initvideo(self, frame):
-		self._closevideo()
-		self.__nfrm = 0
-		self.__oref = cv2.VideoWriter(self.__fref, cv2.VideoWriter_fourcc(*'MP42'), self.__freq, (numpy.size(frame, 1), numpy.size(frame, 0)), True)
-		self._writevideo(frame)
+		return self._pause
 
 	# Method: _writevideo
 	def _writevideo(self, frame):
-		self.__dtrec = datetime.datetime.now()
-		self.__oref.write(frame)
-		self.__nfrm += 1
-
-	# Method: _closevideo
-	def _closevideo(self):
-		if self.__oref is not None:
+		frefExists = self.__fref is None
+		orefExists = self.__oref is None
+		frefInvalid = self.__fref is not None and self.__oref is not None and not os.path.isfile(self.__fref)
+		if frefInvalid:
 			del self.__oref
 			self.__oref = None
+		if frefExists or orefExists or frefInvalid:
+			if self.isCalibrating():
+				self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0') + "-calibration-sample.avi"
+			else:
+				self.__fref = self._location + time.strftime("/%Y/%m/%d/", time.localtime())
+				os.makedirs(self.__fref)
+				self.__fref += os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
+				self.__fref += "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".avi"
+			codec = cv2.VideoWriter_fourcc(*self._codec)
+			resol = (numpy.size(frame, 1), numpy.size(frame, 0))
+			self.__oref = cv2.VideoWriter(self.__fref, codec, self._recfq, resol, True)
+		self._dtrec = datetime.datetime.now()
+		self.__oref.write(frame)
+		self._nofrm += 1
 
 	# Method: _writeimage
 	def _writeimage(self, frame):
-		self.__dtrec = datetime.datetime.now()
+		# Set the file name
+		if self.__fref is None:
+			if self.isCalibrating():
+				self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0') +  "-calibration-sample.png"
+			else:
+				self.__fref = self._location + time.strftime("/%Y/%m/%d/%H", time.localtime())
+				os.makedirs(self.__fref)
+				self.__fref += os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
+				self.__fref += "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+				self.__fref += ".png"
+		self._dtrec = datetime.datetime.now()
 		cv2.imwrite(self.__fref, frame)
-		self.__nfrm += 1
+		self._nofrm += 1
 
-	# Method: getLastMotionDatetime
-	def getLastRecordingDatetime(self):
-		return self.__dtrec
+	# Method: getLastTimestamp
+	def getLastTimestamp(self):
+		return self._dtrec
+
+	# Method: isCalibrating
+	def isCalibrating(self):
+		return self.__clbr
+
+	# Method: calibrate
+	def calibrate(self, init=False):
+		if init:
+			self.__dtclbr = None
+			self.__clbr = init
+			self.__oref = None
+			self.__fref = None
+			self.__nerr = 0
+			self._recfq = 2
+			self._fsize = 0
+			self._nofrm = 0
+			self.__text = "Calibrating"
+		elif self.__clbr:
+			# Set calibration start date/time
+			if self.__dtclbr is None:
+				self.__dtclbr = datetime.datetime.now()
+			# Run measurement of output resources during calibration
+			if self._format == 'image':
+				self._fsize += os.path.getsize(self.__fref) / 1024
+			elif self._format == 'video':
+				self._fsize = os.path.getsize(self.__fref) / 1024
+			# Run evaluation of output resources after calibration
+			if (datetime.datetime.now() - self.__dtclbr).total_seconds() > 20:
+				# Calculate frequency
+				self._recfq = int(round(self._nofrm / (datetime.datetime.now() - self.__dtclbr).total_seconds(), 0))
+				#  Calculate sample size
+				if self._format == 'image':
+					self._fsize = round(self._fsize / self._nofrm, 2)
+				elif self._format == 'video':
+					self._fsize = round(self._fsize / (datetime.datetime.now() - self.__dtclbr).total_seconds(), 2)
+					del self.__oref
+					self.__oref = None
+				# Remove sample file
+				os.remove(self.__fref)
+				self._camera.log("Calibration process detected recording frame rate is " + str(self._recfq) + "frames/seconds and the average frame size is " + str(self._fsize) + " KB")
+				self._nofrm = 0
+				self.__nerr = 0
+				self.__fref = None
+				self.__text = None
+				self.__clbr = False
 
 	# Method: run
 	def run(self, frame):
 		# Validate input frame and workflow flags
-		if frame is None or self.isPaused() or self.isNotRunning() or self.__alrt:
+		if frame is None or self.isPaused() or self.isNotRunning():
 			return
-		# Define file name for calibration samples
-		if self.__clbr:
-			if self._format == 'image':
-				self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
-				self.__fref += "-calibration-sample.png"
-			elif self._format == 'video':
-				self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
-				self.__fref += "-calibration-sample.avi"
 		# Define recording message
-		if self.__clbr:
-			message = "Calibrating @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
-		else:
-			if self.__text is None:
-				self.__text = "Recording"
-			message = self.__text + " @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
+		if self.__text is None:
+			self.__text = "Recording"
 		# Recording and calibration workflow
 		try:
-			# Set recording message and add it to the frame
-			cv2.putText(frame, message, (10, numpy.size(frame, 0) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255))
-			# Define the name of image file
+			# Set recording message
+			self._camera.setFrameLabel(frame, self.__text)
+			# Save/write output file
 			if self._format == 'image':
-				if not self.__clbr:
-					self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
-					self.__fref += "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-					self.__fref += ".png"
-				# Write/Save image file on the file system
 				self._writeimage(frame)
-				# Calculate aggregated calibration samples size
-				if self.__clbr:
-					self.__size += os.path.getsize(self.__fref) / 1024
 			elif self._format == 'video':
-				if not self.__clbr:
-					# If the file reach the maximum number of frames reset the name
-					#if self.__nfrm >= 12000:
-					#	self.__fref = None
-					#	self.__nfrm = 0
-					# Define video file name
-					if self.__fref is None:
-						self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
-						self.__fref += "-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".avi"
-					# Validate the video references: file and pointer
-					if not os.path.isfile(self.__fref) and self.__oref is not None:
-						del self.__oref
-						self.__oref = None
-				# Write/Save video file on the file system
-				if self.__oref is not None:
-					self._writevideo(frame)
-				else:
-					self._initvideo(frame)
-				# Calculate calibration sample size
-				if self.__clbr:
-					self.__size = os.path.getsize(self.__fref) / 1024
-			# Delete the frame copy used for recording
-			#del clone
+				self._writevideo(frame)
 			# Reset the errors counter detected during recording
 			self.__nerr = 0
 		except BaseException as baserr:
@@ -858,36 +853,20 @@ class RecordingService(CamService):
 				self.stop()
 			else:
 				self._camera.log(["Error in recording workflow:", baserr])
-		# Evaluate calibration process when it ends
-		if self.__clbr and (datetime.datetime.now() - self.__cldt).total_seconds() > 20:
-			# Calculate frequency
-			self.__freq = int(round(self.__nfrm / (datetime.datetime.now() - self.__cldt).total_seconds(), 0))
-			# Remove sample file
-			os.remove(self.__fref)
-			self.__fref = None
-			#  Calculate sample size
-			if self._format == 'image':
-				self.__size = round(self.__size / self.__nfrm, 2)
-			elif self._format == 'video':
-				del self.__oref
-				self.__oref = None
-				self.__size = round(self.__size / (datetime.datetime.now() - self.__cldt).total_seconds(), 2)
-			self._camera.log("Calibration process detected the following system and workflow parameters: " +
-							 "frame rate = " + str(self.__freq) +
-							 ", frame size = " + str(self.__size) +
-							 "K, file system usage = " + str(self.__rinf["disk"]["percent"]) +
-							 "%, available memory = " + str(self.__rinf["memory"]["available"]) +
-							 "K, cpu temperature = " + str(self.__rinf["cpu"]["temp"]) +
-							 "'C")
-			self.__clbr = False
+		# Check calibration process
+		if self.isCalibrating():
+			self.calibrate()
 
 	# Method: checkResources
 	def checkResources(self):
+		#self.resthread = threading.Thread(target=self.checkResources)
+		#self.resthread.daemon = True
+		#self.resthread.start()
 		self._camera.log("Start a new thread to check system resources", "DEBUG")
 		while self.isRunning():
 			# Get system resources
 			self.__rinf = {"disk":diskinfo(self._location), "cpu":cputempinfo(), "memory":memoryinfo()}
-			if self.__rinf["disk"] is not None and (300 * self.__size >= int(self.__rinf["disk"]["available"])):
+			if self.__rinf["disk"] is not None and (300 * self._fsize >= int(self.__rinf["disk"]["available"])):
 				self.__alrt = True
 				self._camera.log("Recording workflow is temporary stopped because '" + str(self.__rinf["disk"]["mountpoint"]) + "' file system will is almost full (it has " + str(self.__rinf["disk"]["available"]) + "KB available space)", "WARN")
 			elif self.__rinf["cpu"] is not None and int(self.__rinf["cpu"]["temp"]) >= 80:
@@ -964,6 +943,32 @@ class StreamingService(CamService):
 				self._stream.setData(frame)
 			except IOError as ioerr:
 				self._camera.log(["Sending streaming data failed:", ioerr])
+
+
+# Class: RegulationService
+class RegulationService(CamService):
+	# Constructor
+	def __init__(self, camera, start=False):
+		CamService.__init__(self, camera, start=start)
+
+	# Method: _r1
+	def _r1(self, frame):
+		# R1: when motion and recording are running try to record only motions
+		if self._camera.isCameraMotionOn() and self._camera.isCameraRecordingOn() and not self._camera.isRecordingCalibration():
+			if self._camera.isMotionDetected():
+				self._camera.setRecordingMessage("Motion detected")
+				self._camera.setRecordingPause(False)
+			else:
+				if (self._camera.getRecordingLastTimestamp() - self._camera.getMotionLastTimestamp()).total_seconds() < 10:
+					self._camera.setRecordingMessage("Motion standby")
+					self._camera.setRecordingPause(False)
+				else:
+					self._camera.setFrameLabel(frame, "Waiting for motion")
+					self._camera.setRecordingPause(True)
+
+	# Method: run
+	def run(self, frame):
+		self._r1(frame)
 
 
 # Class: StreamHandler

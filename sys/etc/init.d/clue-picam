@@ -18,6 +18,10 @@ DESC="Clue PiCam"
 
 . /lib/lsb/init-functions
 
+PATH=/opt/clue/bin:$PATH
+PYTHONPATH=/opt/clue/lib/python2.7/dist-packages:$PYTHONPATH
+export PATH PYTHONPATH
+
 case "$1" in
 	start)
 		log_daemon_msg "Starting $DESC" "$NAME"

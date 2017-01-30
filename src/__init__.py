@@ -1,6 +1,6 @@
 #!/usr/bin/python
 
-# PiCam Module Definition"
+# PiCam Module Definition
 __project__   = "Clue"
 __module__    = "PiCam"
 __email__     = "damian.stefan@gmail.com"
