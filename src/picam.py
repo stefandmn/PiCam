@@ -484,6 +484,18 @@ class Camera(threading.Thread):
 	def getRecordingFormat(self):
 		return self._record.getFormat()
 
+	# Method: setRecordingEncoder
+	def setRecordingEncoder(self, value):
+		if self.isCameraRecordingOn():
+			self._record.calibrate(init=True)
+			self._record.setEncoder(value)
+		else:
+			self._record.setEncoder(value)
+
+	# Method: getRecordingEncoder
+	def getRecordingEncoder(self):
+		return self._record.getEncoder()
+
 	# Method: setRecordingMessage
 	def setRecordingMessage(self, value):
 		self._record.setMessage(value)
@@ -1396,6 +1408,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 				result += ', "' + StateData.Properties[8] + '":"' + ('On' if camera.isCameraRecordingOn() else 'Off') + '"'
 				if camera.isCameraRecordingOn():
 					result += ', "' + StateData.Properties[9] + '":"' + any2str(camera.getRecordingFormat()) + '"'
+					result += ', "' + StateData.Properties[18] + '":"' + any2str(camera.getRecordingEncoder()) + '"'
 					result += ', "' + StateData.Properties[11] + '":"' + any2str(camera.getRecordingLocation()) + '"'
 				# CameraStreaming
 				result += ', "' + StateData.Properties[2] + '":"' + ('On' if camera.isCameraStreamingOn() else 'Off') + '"'
@@ -1543,6 +1556,9 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 					# Evaluate RecordingFormat property
 					elif camprop.lower() == StateData.Properties[9].lower():
 						camera.setRecordingFormat(any2str(camdata))
+					# Evaluate RecordingEncoder property
+					elif camprop.lower() == StateData.Properties[18].lower():
+						camera.setRecordingEncoder(any2str(camdata))
 					# Evaluate RecordingLocation property
 					elif camprop.lower() == StateData.Properties[11].lower():
 						camera.setRecordingLocation(any2str(camdata))
@@ -1698,6 +1714,14 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 						# RecordingFormat
 						if service.get("RecordingFormat"):
 							jsonout = json.loads(self.runPropertySet(CameraId, "RecordingFormat", service["RecordingFormat"]))
+							if jsonout["achieved"]:
+								if result["set-properties"].count(jsonout["result"]["property"]) == 0:
+									result["set-properties"].append(jsonout["result"]["property"])
+							else:
+								msg += ('. ' + str(jsonout["message"]))
+						# RecordingEncoder
+						if service.get("RecordingEncoder"):
+							jsonout = json.loads(self.runPropertySet(CameraId, "RecordingEncoder", service["RecordingEncoder"]))
 							if jsonout["achieved"]:
 								if result["set-properties"].count(jsonout["result"]["property"]) == 0:
 									result["set-properties"].append(jsonout["result"]["property"])
@@ -2042,6 +2066,7 @@ class PiCamClient:
 				if service.get("CameraRecording") and any2bool(service["CameraRecording"]):
 					text += '\n\t\t| CameraRecording: On'
 					text += '\n\t\t\t|| RecordingFormat: ' + any2str(service["RecordingFormat"])
+					text += '\n\t\t\t|| RecordingEncoder: ' + any2str(service["RecordingEncoder"])
 					text += '\n\t\t\t|| RecordingLocation: ' + any2str(service["RecordingLocation"])
 				elif service.get("CameraRecording") and not any2bool(service["CameraRecording"]):
 					text += '\n\t\t| CameraRecording: Off'
@@ -2120,6 +2145,9 @@ class PiCamClient:
 							# RecordingFormat
 							if service.get("RecordingFormat") and service["RecordingFormat"] != "default":
 								content.append("set property RecordingFormat=" + any2str(service["RecordingFormat"]) + CameraId)
+							# RecordingEncoder
+							if service.get("RecordingEncoder") and service["RecordingEncoder"] != "default":
+								content.append("set property RecordingEncoder=" + any2str(service["RecordingEncoder"]) + CameraId)
 							# RecordingLocation
 							if service.get("RecordingLocation") and service["RecordingLocation"] != "default":
 								content.append("set property RecordingLocation=" + any2str(service["RecordingLocation"]) + CameraId)
@@ -2165,8 +2193,8 @@ class StateData:
 	Subjects = ['server', 'service', 'property']
 	Properties = ['CameraId', 'CameraStatus', 'CameraStreaming', 'CameraMotion', 'CameraResolution', 'CameraFramerate',
 				  'CameraSleeptime', 'MotionContour', 'CameraRecording', 'RecordingFormat', 'MotionThreshold',
-				  'RecordingLocation', 'StreamingPort', 'StreamingSleeptime', 'MotionSympathy',
-				  'CameraBrightness', 'CameraSaturation', 'CameraContrast']
+				  'RecordingLocation', 'StreamingPort', 'StreamingSleeptime', 'MotionSympathy', 'CameraBrightness',
+				  'CameraSaturation', 'CameraContrast', 'RecordingEncoder']
 	Articles = ['@', 'at', 'on', 'in', 'to', 'from']
 
 	# Constructor

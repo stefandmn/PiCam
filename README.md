@@ -85,17 +85,22 @@ contains only three elements:
    - **CameraResolution** = set camera resolution (by default the resolution for any attached camera is 640x480, 
    - **CameraFramerate** = set camera framerate (no default value is used, the camera uses the framerate set by 
      default by manufacturer), 
+   - **CameraBrightness** = set the brightness level of the camera as an integer between 0 and 100
+   - **CameraSaturation** = set the color saturation of the camera as an integer between -100 and 100
+   - **CameraContrast** = set the the contrast level of the camera as an integer between -100 and 100
    - **CameraSleeptime** = sleeping time between two frames (it could be considered a second framerate but provided 
      by the application), 
    - **CameraMotion** = activate/de-activate motion detection (by default any activated camera/service will use start 
      motion detection service), 
    - **MotionContour** = activate/de-activate to draw a contour for detected motion on each camera frame (by default 
      it is active), 
-   - **MotionThreshold** = set the motion detection threshold for vieweing and recording; any motion 'volume' over 
+   - **MotionThreshold** = set the motion detection threshold for viewing and recording; any motion 'volume' over 
      this value will be shown marked and/or recorded, 
+   - **MotionSympaty** = set the motion detection sensibility for viewing and recording
    - **CameraRecording** = activate/de-activate camera recording (image or video format); by default the option is disabled, 
    - **RecordingFormat** = set the recording format for camera recording function; the options are `image` or 
-   `video` (default value is _image_), 
+   `video` (default value is _image_),
+   - **RecordingEncoder** = set video encoder for video recorder format; to set the value check http://www.fourcc.org/codecs.php
    - **RecordingLocation** = set location for the file(s) that will be created by recording service, 
    - **StreamingPort** = set streaming port, 
    - **StreamingSleeptime** = set streaming sleeping time between displayed frames.
