@@ -986,7 +986,8 @@ class RulingEngine(CamService):
 		self._r3runner = False
 		self._r3action = False
 		self._r4runner = False
-		self._r4action = False
+		self._r4action1 = False
+		self._r4action2 = False
 		self.resmon = threading.Thread(target=self.monitor)
 		self.resmon.daemon = True
 		self.resmon.start()
@@ -1031,11 +1032,11 @@ class RulingEngine(CamService):
 		# R1: when motion and recording are running try to record only motions
 		if self._camera.isCameraMotionOn() and self._camera.isCameraRecordingOn() and not self._camera.isRecordingCalibration():
 			if self._camera.isMotionDetected():
-				self._camera.setRecordingMessage("Motion")
+				self._camera.setRecordingMessage("Motion +")
 				self._camera.setRecordingPause(False)
 			else:
 				if (self._camera.getRecordingLastTimestamp() - self._camera.getMotionLastTimestamp()).total_seconds() < 10:
-					self._camera.setRecordingMessage("Motion")
+					self._camera.setRecordingMessage("Motion -")
 					self._camera.setRecordingPause(False)
 				else:
 					self._camera.setFrameLabel(frame, "Standby")
@@ -1043,6 +1044,7 @@ class RulingEngine(CamService):
 
 	# Method: _r2
 	def _r2(self, frame):
+		# R2: when video recording is activated split the recording files after 6h from file creation date/time
 		if self._camera.isCameraRecordingOn() and self._camera.getRecordingFormat() == 'video':
 			if self._r2cronos is None:
 				self._r2cronos = datetime.datetime.now()
@@ -1054,29 +1056,42 @@ class RulingEngine(CamService):
 
 	# Method: _r3
 	def _r3(self, frame):
-		if self._camera.isCameraRecordingOn() and not self._r3action:
-			if self._resinfo["disk"] is not None and (300 * self._camera.getRecordingAvgFrameSize() >= int(self._resinfo["disk"]["available"])):
+		# R3: when recording is activated and no enough space available to continue recording it will stop the recording process
+		if self._resinfo["disk"] is not None and (300 * self._camera.getRecordingAvgFrameSize() >= int(self._resinfo["disk"]["available"])):
+			if self._camera.isCameraRecordingOn():
 				self._camera.log("Recording process will be stopped because '" + str(self._resinfo["disk"]["mountpoint"]) + "' file system will is almost full (it has " + str(self._resinfo["disk"]["available"]) + "KB available space)", "WARN")
 				self._camera.setCameraRecording(False)
 				self._r3action = True
-		elif not self._camera.isCameraRecordingOn() and self._r3action:
-			if self._resinfo["disk"] is not None and (300 * self._camera.getRecordingAvgFrameSize() < int(self._resinfo["disk"]["available"])):
-				self._camera.log("Recording process will be restarted due to disk space availability", "WARN")
-				self._camera.setCameraRecording(True)
+		else:
+			if self._r3action:
+				if not self._camera.isCameraRecordingOn():
+					self._camera.log("Recording process will be resumed due to disk space availability", "WARN")
+					self._camera.setCameraRecording(True)
 				self._r3action = False
 
 	# Method: _r4
 	def _r4(self, frame):
-		if self._camera.isCameraOn() and not self._r4action:
-			if self._resinfo["cpu"] is not None and int(self._resinfo["cpu"]["temp"]) >= 80:
-				self._camera.log("Service will be stopped because the processor temperature is too high (it has " + str(self._resinfo["cpu"]["temp"]) + "'C)", "WARN")
-				self._camera.setCameraOff()
-				self._r4action = True
-		elif self._camera.isCameraOff() and self._r4action:
-			if self._resinfo["cpu"] is not None and int(self._resinfo["cpu"]["temp"]) < 80:
-				self._camera.log("Service will be restarted due to normal cpu temperature", "WARN")
-				self._camera.setCameraOn()
-				self._r4action = False
+		# R4: when cpu temperature is too high stop each services one by one
+		if self._resinfo["cpu"] is not None and int(self._resinfo["cpu"]["temp"]) >= 80:
+			if self._camera.isCameraMotionOn():
+				self._camera.log("Motion detection process will be stopped because the processor temperature is too high (it has " + str(self._resinfo["cpu"]["temp"]) + "'C)", "WARN")
+				self._camera.setCameraMotion(False)
+				self._r4action1 = True
+			elif self._camera.isCameraRecordingOn():
+				self._camera.log("Recording process will be stopped because the processor temperature is too high (it has " + str(self._resinfo["cpu"]["temp"]) + "'C)", "WARN")
+				self._camera.setCameraRecording(False)
+				self._r4action2 = True
+		else:
+			if self._r4action1:
+				if not self._camera.isCameraMotionOn():
+					self._camera.log("Motion detection process will be resumed due to normal temperature of cpu", "WARN")
+					self._camera.setCameraMotion(True)
+				self._r4action1 = False
+			elif self._r4action2:
+				if not self._camera.isCameraRecordingOn():
+					self._camera.log("Recording process will be resumed due to normal temperature of cpu", "WARN")
+					self._camera.setCameraRecording(True)
+				self._r4action2 = False
 
 
 # Class: StreamHandler
