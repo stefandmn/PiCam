@@ -1172,7 +1172,16 @@ class PiCamServerHandler(BaseRequestHandler):
 		# Get client connection
 		self._server.log("Handling connection from " + str(self.client_address), "DEBUG")
 		# Receive data from client and process it
-		command = self.request.recv(1024).strip()
+		command = ''
+		while True:
+			part = self.request.recv(1024)
+			if part is not None and part != '':
+				command += part
+				if len(part) < 1024:
+					break
+			else:
+				break
+		command = command.strip()
 		# Process client requests
 		try:
 			self._server.log("Receiving client request: " + str(command), "DEBUG")
@@ -1898,38 +1907,44 @@ class PiCamClient:
 				command = data.getStatement()
 				self.log("Sending command: " + command)
 				client.sendall(command)
-				# Getting the answers from server
+				# Read the answer from server
+				answer = ''
 				while True:
-					answer = client.recv(1024)
-					if answer is not None and answer != '':
-						if not self._api:
-							# Get JSON structure
-							jsonanswer = json.loads(answer)
-							# Read message type and value to be displayed to STD output
-							if jsonanswer is not None:
-								if jsonanswer.get("message") is not None:
-									message = jsonanswer["message"]
-								else:
-									message = None
-								if jsonanswer["achieved"]:
-									level = "INFO"
-								else:
-									level = "ERROR"
-							else:
-								message = "Server message could not be translated: " + str(answer)
-								level = "ERROR"
-							# Display message to standard output
-							if jsonanswer["action"] == StateData.Actions[8] and jsonanswer["subject"] == StateData.Subjects[0]:
-								self.log(self._echo(jsonanswer), type="INFO")
-							elif jsonanswer["action"] == StateData.Actions[7] and jsonanswer["subject"] == StateData.Subjects[0]:
-								self.log(self._status(jsonanswer), type="INFO")
-							elif message is not None:
-								self.log(message, type=level)
-						else:
-							self._apiData.append(answer)
+					part = client.recv(1024)
+					if part is not None and part != '':
+						answer += part
+						if len(part) < 1024:
+							break
 					else:
 						break
 				client.close()
+				answer = answer.strip()
+				# Process server answer
+				if not self._api:
+					# Get JSON structure
+					jsonanswer = json.loads(answer)
+					# Read message type and value to be displayed to STD output
+					if jsonanswer is not None:
+						if jsonanswer.get("message") is not None:
+							message = jsonanswer["message"]
+						else:
+							message = None
+						if jsonanswer["achieved"]:
+							level = "INFO"
+						else:
+							level = "ERROR"
+					else:
+						message = "Server message could not be translated: " + str(answer)
+						level = "ERROR"
+					# Display message to standard output
+					if jsonanswer["action"] == StateData.Actions[8] and jsonanswer["subject"] == StateData.Subjects[0]:
+						self.log(self._echo(jsonanswer), type="INFO")
+					elif jsonanswer["action"] == StateData.Actions[7] and jsonanswer["subject"] == StateData.Subjects[0]:
+						self.log(self._status(jsonanswer), type="INFO")
+					elif message is not None:
+						self.log(message, type=level)
+				else:
+					self._apiData.append(answer)
 			except BaseException as baserr:
 				errordata = tomsg(["Command failed:", baserr], logger=self._logger)[1]
 				if not self._api:
