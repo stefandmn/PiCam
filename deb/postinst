@@ -8,6 +8,7 @@ if [ $1 == "configure" ]; then
 		chmod +x /etc/profile.d/01-cluepath.sh
 		. /etc/profile.d/01-cluepath.sh
 	fi
+
 	# Append specific values in PYTHONPATH
 	if [ ! -f /etc/profile.d/02-cluepypath.sh ]; then
 		echo "PYTHONPATH=/opt/clue/lib/python2.7/dist-packages:\$PYTHONPATH" >/etc/profile.d/02-cluepypath.sh
