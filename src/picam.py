@@ -83,7 +83,7 @@ class Camera(threading.Thread):
 		if streaming:
 			self._stream.start()
 		# Initialize and start ruling engine
-		self._ruling = RegulationService(self, start=True)
+		self._ruling = RegulationEngine(self, start=True)
 		# Logging initialization phase for teh camera instance
 		self.log("Service has been initialized")
 
@@ -456,6 +456,22 @@ class Camera(threading.Thread):
 	def getRecordingLocation(self):
 		return self._record.getLocation()
 
+	# Method: getRecordingFramesNumber
+	def getRecordingFramesNumber(self):
+		return self._record.getFramesNumber()
+
+	# Method: getRecordingFrameSize
+	def getRecordingAvgFrameSize(self):
+		return self._record.getAvgFrameSize()
+
+	# Method: getRecordingFrequency
+	def getRecordingFrequency(self):
+		return self._record.getFrequency()
+
+	# Method: setRecordingNewFile
+	def setRecordingNewFile(self):
+		return self._record.setNewFile()
+
 	# Method: setRecordingFormat
 	def setRecordingFormat(self, value):
 		if self.isCameraRecordingOn():
@@ -747,6 +763,26 @@ class RecordingService(CamService):
 	def isPaused(self):
 		return self._pause
 
+	# Method: getFramesNumber
+	def getFramesNumber(self):
+		return self._nofrm
+
+	# Method: getFrameSize
+	def getAvgFrameSize(self):
+		return self._fsize
+
+	# Method: getFrequency
+	def getFrequency(self):
+		return self._recfq
+
+	# Method: getFrequency
+	def setNewFile(self):
+		if not self.isCalibrating():
+			self.__fref = None
+			if self.__oref is not None:
+				del self.__oref
+				self.__oref = None
+
 	# Method: _writevideo
 	def _writevideo(self, frame):
 		frefExists = self.__fref is None
@@ -757,9 +793,12 @@ class RecordingService(CamService):
 			self.__oref = None
 		if frefExists or orefExists or frefInvalid:
 			if self.isCalibrating():
-				self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0') + "-calibration-sample.avi"
+				self.__fref = self._location
+				if not os.path.exists(self.__fref):
+					os.makedirs(self.__fref)
+				self.__fref += "/cam" + str(self._camera.id).rjust(2, '0') + "-calibration-sample.avi"
 			else:
-				self.__fref = self._location + time.strftime("/%Y/%m/%d/", time.localtime())
+				self.__fref = self._location + time.strftime("/%Y%m/%d/", time.localtime())
 				if not os.path.exists(self.__fref):
 					os.makedirs(self.__fref)
 				self.__fref += os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
@@ -776,9 +815,12 @@ class RecordingService(CamService):
 		# Set the file name
 		if self.__fref is None:
 			if self.isCalibrating():
-				self.__fref = self._location + os.path.sep + "cam" + str(self._camera.id).rjust(2, '0') +  "-calibration-sample.png"
+				self.__fref = self._location
+				if not os.path.exists(self.__fref):
+					os.makedirs(self.__fref)
+				self.__fref += "/cam" + str(self._camera.id).rjust(2, '0') +  "-calibration-sample.png"
 			else:
-				self.__fref = self._location + time.strftime("/%Y/%m/%d/%H", time.localtime())
+				self.__fref = self._location + time.strftime("/%Y%m/%d/%H", time.localtime())
 				if not os.path.exists(self.__fref):
 					os.makedirs(self.__fref)
 				self.__fref += os.path.sep + "cam" + str(self._camera.id).rjust(2, '0')
@@ -830,7 +872,7 @@ class RecordingService(CamService):
 					self.__oref = None
 				# Remove sample file
 				os.remove(self.__fref)
-				self._camera.log("Calibration process detected recording frame rate is " + str(self._recfq) + "frames/seconds and the average frame size is " + str(self._fsize) + " KB")
+				self._camera.log("Calibration process detected recording frame rate is " + str(self._recfq) + " f/s and the average frame size is " + str(self._fsize) + " KB")
 				self._nofrm = 0
 				self.__nerr = 0
 				self.__fref = None
@@ -866,29 +908,6 @@ class RecordingService(CamService):
 		# Check calibration process
 		if self.isCalibrating():
 			self.calibrate()
-
-	# Method: checkResources
-	def checkResources(self):
-		#self.resthread = threading.Thread(target=self.checkResources)
-		#self.resthread.daemon = True
-		#self.resthread.start()
-		self._camera.log("Start a new thread to check system resources", "DEBUG")
-		while self.isRunning():
-			# Get system resources
-			self.__rinf = {"disk":diskinfo(self._location), "cpu":cputempinfo(), "memory":memoryinfo()}
-			if self.__rinf["disk"] is not None and (300 * self._fsize >= int(self.__rinf["disk"]["available"])):
-				self.__alrt = True
-				self._camera.log("Recording workflow is temporary stopped because '" + str(self.__rinf["disk"]["mountpoint"]) + "' file system will is almost full (it has " + str(self.__rinf["disk"]["available"]) + "KB available space)", "WARN")
-			elif self.__rinf["cpu"] is not None and int(self.__rinf["cpu"]["temp"]) >= 80:
-				self.__alrt = True
-				self._camera.log("Recording workflow is temporary stopped because the processor temperature is too high (it has " + str(self.__rinf["cpu"]["temp"]) + "'C)", "WARN")
-			else:
-				if self.__alrt:
-					self._camera.log("Recording workflow might be resumed due to resources availability: " + json.dumps(self.__rinf), "DEBUG")
-				self.__alrt = False
-			# Wait for next 5 minutes
-			time.sleep(300)
-		self._camera.log("Stop the thread used to check system resources", "DEBUG")
 
 
 # Class: CamStreaming
@@ -956,29 +975,108 @@ class StreamingService(CamService):
 
 
 # Class: RegulationService
-class RegulationService(CamService):
+class RegulationEngine(CamService):
 	# Constructor
 	def __init__(self, camera, start=False):
 		CamService.__init__(self, camera, start=start)
+		self._resinfo = None
+		self._period = 0
+		self._r2runner = False
+		self._r2cronos = None
+		self._r3runner = False
+		self._r3action = False
+		self._r4runner = False
+		self._r4action = False
+		self.resmon = threading.Thread(target=self.monitor)
+		self.resmon.daemon = True
+		self.resmon.start()
+
+	# Method: monitor
+	def monitor(self):
+		self._camera.log("Start a new thread to check system resources", "DEBUG")
+		while self.isRunning():
+			self._period += 1
+			# Get system resources
+			self._resinfo = {"disk":diskinfo(self._camera.getRecordingLocation()), "cpu":cputempinfo(), "memory":memoryinfo()}
+			self._camera.log("Monitoring system resources: " + json.dumps(self._resinfo), "DEBUG")
+			self._r2runner = True if self._period == 2 else False
+			self._r3runner = True if self._period == 3 else False
+			self._r4runner = True if self._period == 4 else False
+			# Wait for next 5 minutes
+			time.sleep(60)
+			# Reset period
+			if self._period >= 4:
+				self._period = 0
+		self._camera.log("Stop the thread used to check system resources", "DEBUG")
+
+	# Method: getResourcesInfo
+	def getResourcesInfo(self):
+		return self._resinfo
+
+	# Method: run
+	def run(self, frame):
+		self._r1(frame)
+		if self._r2runner:
+			self._r2(frame)
+			self._r2runner = False
+		if self._r3runner:
+			self._r3(frame)
+			self._r3runner = False
+		if self._r4runner:
+			self._r4(frame)
+			self._r4runner = False
 
 	# Method: _r1
 	def _r1(self, frame):
 		# R1: when motion and recording are running try to record only motions
 		if self._camera.isCameraMotionOn() and self._camera.isCameraRecordingOn() and not self._camera.isRecordingCalibration():
 			if self._camera.isMotionDetected():
-				self._camera.setRecordingMessage("Motion detected")
+				self._camera.setRecordingMessage("Motion")
 				self._camera.setRecordingPause(False)
 			else:
 				if (self._camera.getRecordingLastTimestamp() - self._camera.getMotionLastTimestamp()).total_seconds() < 10:
-					self._camera.setRecordingMessage("Motion stand-by")
+					self._camera.setRecordingMessage("Motion")
 					self._camera.setRecordingPause(False)
 				else:
-					self._camera.setFrameLabel(frame, "Waiting motion")
+					self._camera.setFrameLabel(frame, "Standby")
 					self._camera.setRecordingPause(True)
 
-	# Method: run
-	def run(self, frame):
-		self._r1(frame)
+	# Method: _r2
+	def _r2(self, frame):
+		if self._camera.isCameraRecordingOn() and self._camera.getRecordingFormat() == 'video':
+			if self._r2cronos is None:
+				self._r2cronos = datetime.datetime.now()
+			else:
+				if (self._camera.getRecordingLastTimestamp() - self._r2cronos).total_seconds() >= 6 * 3600:
+					self._r2cronos = None
+					self._camera.setRecordingNewFile()
+					self._camera.log("Reset recording output file", "DEBUG")
+
+	# Method: _r3
+	def _r3(self, frame):
+		if self._camera.isCameraRecordingOn() and not self._r3action:
+			if self._resinfo["disk"] is not None and (300 * self._camera.getRecordingAvgFrameSize() >= int(self._resinfo["disk"]["available"])):
+				self._camera.log("Recording process will be stopped because '" + str(self._resinfo["disk"]["mountpoint"]) + "' file system will is almost full (it has " + str(self._resinfo["disk"]["available"]) + "KB available space)", "WARN")
+				self._camera.setCameraRecording(False)
+				self._r3action = True
+		elif not self._camera.isCameraRecordingOn() and self._r3action:
+			if self._resinfo["disk"] is not None and (300 * self._camera.getRecordingAvgFrameSize() < int(self._resinfo["disk"]["available"])):
+				self._camera.log("Recording process will be restarted due to disk space availability", "WARN")
+				self._camera.setCameraRecording(True)
+				self._r3action = False
+
+	# Method: _r4
+	def _r4(self, frame):
+		if self._camera.isCameraOn() and not self._r4action:
+			if self._resinfo["cpu"] is not None and int(self._resinfo["cpu"]["temp"]) >= 80:
+				self._camera.log("Service will be stopped because the processor temperature is too high (it has " + str(self._resinfo["cpu"]["temp"]) + "'C)", "WARN")
+				self._camera.setCameraOff()
+				self._r4action = True
+		elif self._camera.isCameraOff() and self._r4action:
+			if self._resinfo["cpu"] is not None and int(self._resinfo["cpu"]["temp"]) < 80:
+				self._camera.log("Service will be restarted due to normal cpu temperature", "WARN")
+				self._camera.setCameraOn()
+				self._r4action = False
 
 
 # Class: StreamHandler
@@ -2248,15 +2346,16 @@ def logger(name, console=True):
 	log = logging.getLogger(name)
 	if console:
 		handler = logging.StreamHandler()
+		formater = logging.Formatter('%(asctime)s | %(levelno)s %(name)s > %(message)s')
 	else:
 		handler = logging.FileHandler('/var/log/picam.log')
+		formater = logging.Formatter('%(asctime)s | %(thread)d | %(levelno)s %(name)s > %(message)s')
 	if __verbose__:
 		log.setLevel(logging.DEBUG)
 		handler.setLevel(logging.DEBUG)
 	else:
 		log.setLevel(logging.INFO)
 		handler.setLevel(logging.INFO)
-	formater = logging.Formatter('%(asctime)s | %(levelno)s %(name)s > %(message)s')
 	formater.datefmt = '%Y%m%d%H%M%S'
 	handler.setFormatter(formater)
 	log.addHandler(handler)
