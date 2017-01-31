@@ -1519,55 +1519,55 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 					camera = self.getCameras()[key]
 					# Evaluate CameraStreaming property
 					if camprop.lower() == StateData.Properties[2].lower():
-						camera.setCameraStreaming(any2bool(camdata))
+						camera.setCameraStreaming(any2bool(camdata, error=True, none=False))
 					# Evaluate CameraMotion property
 					elif camprop.lower() == StateData.Properties[3].lower():
-						camera.setCameraMotion(any2bool(camdata))
+						camera.setCameraMotion(any2bool(camdata, error=True, none=False))
 					# Evaluate CameraResolution property
 					elif camprop.lower() == StateData.Properties[4].lower():
-						camera.setCameraResolution(any2str(camdata))
+						camera.setCameraResolution(any2str(camdata, error=True, none=False))
 					# Evaluate CameraFramerate property
 					elif camprop.lower() == StateData.Properties[5].lower():
-						camera.setCameraFramerate(any2int(camdata))
+						camera.setCameraFramerate(any2int(camdata, error=True, none=False))
 					# Evaluate CameraBrightness property
 					elif camprop.lower() == StateData.Properties[15].lower():
-						camera.setCameraBrightness(any2int(camdata))
+						camera.setCameraBrightness(any2int(camdata, error=True, none=False))
 					# Evaluate CameraSaturation property
 					elif camprop.lower() == StateData.Properties[16].lower():
-						camera.setCameraSaturation(any2int(camdata))
+						camera.setCameraSaturation(any2int(camdata, error=True, none=False))
 					# Evaluate CameraContrast property
 					elif camprop.lower() == StateData.Properties[17].lower():
-						camera.setCameraContrast(any2int(camdata))
+						camera.setCameraContrast(any2int(camdata, error=True, none=False))
 					# Evaluate CameraSleeptime property
 					elif camprop.lower() == StateData.Properties[6].lower():
-						camera.setCameraSleeptime(any2float(camdata))
+						camera.setCameraSleeptime(any2float(camdata, error=True, none=False))
 					# Evaluate MotionContour property
 					elif camprop.lower() == StateData.Properties[7].lower():
-						camera.setMotionContour(any2bool(camdata))
+						camera.setMotionContour(any2bool(camdata, error=True, none=False))
 					# Evaluate MotionThreshold property
 					elif camprop.lower() == StateData.Properties[10].lower():
-						camera.setMotionThreshold(any2int(camdata))
+						camera.setMotionThreshold(any2int(camdata, error=True, none=False))
 					# Evaluate MotionSympathy property
 					elif camprop.lower() == StateData.Properties[14].lower():
-						camera.setMotionSympathy(any2int(camdata))
+						camera.setMotionSympathy(any2int(camdata, error=True, none=False))
 					# Evaluate CameraRecording property
 					elif camprop.lower() == StateData.Properties[8].lower():
-						camera.setCameraRecording(any2bool(camdata))
+						camera.setCameraRecording(any2bool(camdata, error=True, none=False))
 					# Evaluate RecordingFormat property
 					elif camprop.lower() == StateData.Properties[9].lower():
-						camera.setRecordingFormat(any2str(camdata))
+						camera.setRecordingFormat(any2str(camdata, error=True, none=False))
 					# Evaluate RecordingEncoder property
 					elif camprop.lower() == StateData.Properties[18].lower():
-						camera.setRecordingEncoder(any2str(camdata))
+						camera.setRecordingEncoder(any2str(camdata, error=True, none=False))
 					# Evaluate RecordingLocation property
 					elif camprop.lower() == StateData.Properties[11].lower():
-						camera.setRecordingLocation(any2str(camdata))
+						camera.setRecordingLocation(any2str(camdata, error=True, none=False))
 					# Evaluate StreamingPort property
 					elif camprop.lower() == StateData.Properties[12].lower():
-						camera.setStreamingPort(any2int(camdata))
+						camera.setStreamingPort(any2int(camdata, error=True, none=False))
 					# Evaluate StreamingSleeptime property
 					elif camprop.lower() == StateData.Properties[13].lower():
-						camera.setStreamingSleep(any2float(camdata))
+						camera.setStreamingSleep(any2float(camdata, error=True, none=False))
 					else:
 						achieved = False
 						lvl = 'WARN'
@@ -2344,21 +2344,36 @@ Examples:
 
 
 # Function: str2bool
-def any2bool(v):
-	if isinstance(v, bool):
-		return v
-	if isinstance(v, int):
-		return True if v > 0 else False
-	elif v.lower() in ("on", "yes", "true", "t", "1", "enable", "enabled", "active", "start", "started"):
-		return True
-	elif v.lower() in ("off", "no", "false", "f", "0", "disable", "disabled", "inactive", "stop", "stopped"):
-		return False
+def any2bool(v, error=False, none=True):
+	if v is not None:
+		if isinstance(v, bool):
+			return v
+		elif isinstance(v, int):
+			return True if v > 0 else False
+		elif isinstance(v, str) or isinstance(v, basestring):
+			if v.lower() in ("on", "yes", "true", "t", "1", "enable", "enabled", "active", "start", "started"):
+				return True
+			elif v.lower() in ("off", "no", "false", "f", "0", "disable", "disabled", "inactive", "stop", "stopped"):
+				return False
+			else:
+				if error:
+					raise RuntimeError("Invalid bool type: " + str(v))
+				else:
+					return False
+		else:
+			if error:
+				raise RuntimeError("Invalid bool type: " + str(v))
+			else:
+				return False
 	else:
-		return False
+		if none:
+			return False
+		else:
+			raise RuntimeError("Invalid null value")
 
 
 # Function: any2int
-def any2int(v):
+def any2int(v, error=False, none=True):
 	if v is not None:
 		if isinstance(v, int):
 			return v
@@ -2366,13 +2381,19 @@ def any2int(v):
 			try:
 				return int(v)
 			except:
-				return None
+				if error:
+					raise RuntimeError("Invalid int type: " + str(v))
+				else:
+					return None
 	else:
-		return None
+		if none:
+			return None
+		else:
+			raise RuntimeError("Invalid null value")
 
 
 # Function: any2float
-def any2float(v):
+def any2float(v, error=False, none=True):
 	if v is not None:
 		if isinstance(v, float):
 			return v
@@ -2380,13 +2401,19 @@ def any2float(v):
 			try:
 				return float(v)
 			except:
-				return None
+				if error:
+					raise RuntimeError("Invalid float type: " + str(v))
+				else:
+					return None
 	else:
-		return None
+		if none:
+			return None
+		else:
+			raise RuntimeError("Invalid null value")
 
 
 # Function: any2str
-def any2str(v):
+def any2str(v, error=False, none=True):
 	if v is not None:
 		if isinstance(v, bool):
 			return str(v).lower()
@@ -2394,9 +2421,15 @@ def any2str(v):
 			try:
 				return str(v)
 			except:
-				return None
+				if error:
+					raise RuntimeError("Invalid str type: " + str(v))
+				else:
+					return None
 	else:
-		return None
+		if none:
+			return None
+		else:
+			raise RuntimeError("Invalid null value")
 
 
 # Function: logger
