@@ -83,7 +83,7 @@ class Camera(threading.Thread):
 		if streaming:
 			self._stream.start()
 		# Initialize and start ruling engine
-		self._ruling = RegulationEngine(self, start=True)
+		self._ruling = RulingEngine(self, start=True)
 		# Logging initialization phase for teh camera instance
 		self.log("Service has been initialized")
 
@@ -975,7 +975,7 @@ class StreamingService(CamService):
 
 
 # Class: RegulationService
-class RegulationEngine(CamService):
+class RulingEngine(CamService):
 	# Constructor
 	def __init__(self, camera, start=False):
 		CamService.__init__(self, camera, start=start)
