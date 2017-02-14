@@ -1,6 +1,6 @@
 #!/bin/bash
 ###############################################################################
-# Clue PiCAM - Surveillance application for Clue OS
+# Clue PiCam - Surveillance application for Clue OS
 ###############################################################################
 # Environment variables
 CMD=/usr/bin/python
