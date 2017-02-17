@@ -2320,6 +2320,7 @@ Options:
  -h, --host       host name/ip of the server for client connectivity
  -p, --port       host port number for client connectivity
  -f, --file       file with command to start server instance or to run client commands
+ -s, --status     provide contextual status of camera(s) and their properties (API for integration)
  --help           this help text
  --version        version of picam client
 
