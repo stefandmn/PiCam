@@ -2512,6 +2512,37 @@ def checkcamera(cid=0):
 		return False
 
 
+# Function: _camlist
+def _camlist():
+	ouput = ''
+	cid = 0
+	cix = 0
+	while True:
+		if checkcamera(cid):
+			cix = 0
+			if ouput == '':
+				ouput += str(cid)
+			else:
+				ouput += ' ' + str(cid)
+		else:
+			cix += 1
+		if cix >= 2:
+			break
+		cid += 1
+	return ouput
+
+
+# Function: _camread
+def _camread(statuscmd, jsonstatus):
+	output = ''
+	camprop,camid = statuscmd.split('@')
+	if jsonstatus.get("result") and jsonstatus["result"].get("services"):
+		for service in jsonstatus["result"]["services"]:
+			if int(camid.strip()) == int(service["CameraId"]):
+				output = str(service[camprop])
+	return output
+
+
 # Function: log
 def tomsg(data, level=None, logger=None):
 	objlist = []
@@ -2553,9 +2584,11 @@ if __name__ == "__main__":
 	file = None
 	host = None
 	port = None
+	statuscmd = None
+	statusflg = False
 	try:
 		# Parse input parameters
-		opts, args = getopt.getopt(sys.argv[1:], "c:f:h:i:p:v", ["command=", "file=", "host=", "interface=", "port=", "verbose", "help", "version", "api"])
+		opts, args = getopt.getopt(sys.argv[1:], "c:s:f:h:i:p:v", ["command=", "status=", "file=", "host=", "interface=", "port=", "verbose", "help", "version", "api"])
 		# Collect input parameters
 		for opt, arg in opts:
 			if opt in ("-c", "--command"):
@@ -2578,6 +2611,11 @@ if __name__ == "__main__":
 			elif opt == '--version':
 				print __project__ + " " + __module__ + " " + __version__ + "\n" + __copyright__ + "\n"
 				sys.exit(0)
+			elif opt in ("-s", "--status"):
+				command = "server status"
+				apimode = True
+				statusflg = True
+				statuscmd = arg
 	except BaseException as baserr:
 		command = None
 	# Validate command: if command was not specified through input options collect all input parameters and aggregate them in one single command
@@ -2598,7 +2636,16 @@ if __name__ == "__main__":
 	if not apimode:
 		client.run(command)
 	elif apimode:
-		cmdout = client.run(command)
-		print cmdout
+		if not statusflg:
+			cmdout = client.run(command)
+		else:
+			if statuscmd == 'list':
+				cmdout = _camlist()
+			elif statuscmd.index('@') > 0:
+				cmdout = client.run(command)
+				cmdout = _camread(statuscmd, json.loads(cmdout))
+			else:
+				cmdout = ''
+		print cmdout.strip()
 	# Client normal exist
 	sys.exit(0)
