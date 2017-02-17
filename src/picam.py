@@ -2314,15 +2314,16 @@ def usage():
 Usage: picam -c "init server" [-f ./picam.cfg] -i "0.0.0.0" -p 9079
 
 Options:
- -v, --verbose    run in verbosity mode
- -c, --command    describe the command that should be executed by server component
+ -v, --verbose    runs in debug/verbosity mode
+ -c, --command    describes the command that should be executed by server component
  -i, --interface  host interface to start server component
  -h, --host       host name/ip of the server for client connectivity
  -p, --port       host port number for client connectivity
  -f, --file       file with command to start server instance or to run client commands
- -s, --status     provide contextual status of camera(s) and their properties (API for integration)
- --help           this help text
- --version        version of picam client
+ -s, --status     provides contextual status of camera(s) and their properties (API for integration)
+ --api            shows the client answer in JSON format
+ --help           shows this help text
+ --version        shows the version of picam client
 
 Examples:
 > picam -c "init server"
