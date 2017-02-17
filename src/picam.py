@@ -2315,7 +2315,7 @@ Usage: picam -c "init server" [-f ./picam.cfg] -i "0.0.0.0" -p 9079
 
 Options:
  -v, --verbose    runs in debug/verbosity mode
- -c, --command    describes the command that should be executed by server component
+ -c, --command    command that should be executed by the server component
  -i, --interface  host interface to start server component
  -h, --host       host name/ip of the server for client connectivity
  -p, --port       host port number for client connectivity
@@ -2323,7 +2323,7 @@ Options:
  -s, --status     provides contextual status of camera(s) and their properties (API for integration)
  --api            shows the client answer in JSON format
  --help           shows this help text
- --version        shows the version of picam client
+ --version        shows the version of client component
 
 Examples:
 > picam -c "init server"
