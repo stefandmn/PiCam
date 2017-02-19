@@ -861,6 +861,7 @@ class RecordingService(CamService):
 			self._recfq = 2
 			self._fsize = 0
 			self._nofrm = 0
+			self._pause = False
 			self.__text = "Calibrating"
 		elif self.__clbr:
 			# Set calibration start date/time
