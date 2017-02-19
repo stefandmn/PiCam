@@ -1947,27 +1947,28 @@ class PiCamClient:
 				# Process server answer
 				if not self._api:
 					# Get JSON structure
-					jsonanswer = json.loads(answer)
+					if answer != '' and answer is not None:
+						jsonanswer = json.loads(answer)
+					else:
+						jsonanswer = None
 					# Read message type and value to be displayed to STD output
 					if jsonanswer is not None:
-						if jsonanswer.get("message") is not None:
-							message = jsonanswer["message"]
+						# Display message to standard output
+						if jsonanswer["action"] == StateData.Actions[8] and jsonanswer["subject"] == StateData.Subjects[0]:
+							self.log(self._echo(jsonanswer), type="INFO")
+						elif jsonanswer["action"] == StateData.Actions[7] and jsonanswer["subject"] == StateData.Subjects[0]:
+							self.log(self._status(jsonanswer), type="INFO")
 						else:
-							message = None
-						if jsonanswer["achieved"]:
-							level = "INFO"
-						else:
-							level = "ERROR"
-					else:
-						message = "Server message could not be translated: " + str(answer)
-						level = "ERROR"
-					# Display message to standard output
-					if jsonanswer["action"] == StateData.Actions[8] and jsonanswer["subject"] == StateData.Subjects[0]:
-						self.log(self._echo(jsonanswer), type="INFO")
-					elif jsonanswer["action"] == StateData.Actions[7] and jsonanswer["subject"] == StateData.Subjects[0]:
-						self.log(self._status(jsonanswer), type="INFO")
-					elif message is not None:
-						self.log(message, type=level)
+							if jsonanswer.get("message") is not None:
+								message = jsonanswer["message"]
+							else:
+								message = None
+							if jsonanswer["achieved"]:
+								level = "INFO"
+							else:
+								level = "ERROR"
+							if message is not None:
+								self.log(message, type=level)
 				else:
 					self._apiData.append(answer)
 			except BaseException as baserr:
@@ -2589,6 +2590,7 @@ if __name__ == "__main__":
 	port = None
 	statuscmd = None
 	statusflg = False
+	exit = False
 	try:
 		# Parse input parameters
 		opts, args = getopt.getopt(sys.argv[1:], "c:s:f:h:i:p:v", ["command=", "status=", "file=", "host=", "interface=", "port=", "verbose", "help", "version", "api"])
@@ -2610,10 +2612,12 @@ if __name__ == "__main__":
 				apimode = True
 			elif opt == '--help':
 				usage()
-				sys.exit(0)
+				exit = True
+				break
 			elif opt == '--version':
 				print __project__ + " " + __module__ + " " + __version__ + "\n" + __copyright__ + "\n"
-				sys.exit(0)
+				exit = True
+				break
 			elif opt in ("-s", "--status"):
 				command = "server status"
 				apimode = True
@@ -2627,28 +2631,32 @@ if __name__ == "__main__":
 		if command.strip() == 'help':
 			usage()
 			sys.exit(0)
-	# Instantiate Client module an then run the command
-	client = PiCamClient(host, port, api=apimode)
-	# Specify server interface - if is the case to launch it
-	if isrv is not None:
-		client.srvref(isrv)
-	# Check if a configuration file has been specified, read it ang get all commands defined in
-	if file is not None and os.path.isfile(file):
-		command = client.load(file, command)
-	# Run identified command
-	if not apimode:
-		client.run(command)
-	elif apimode:
-		if not statusflg:
-			cmdout = client.run(command)
-		else:
-			if statuscmd == 'list':
-				cmdout = _camlist()
-			elif statuscmd.index('@') > 0:
+		elif command.strip() == 'version':
+			print __project__ + " " + __module__ + " " + __version__ + "\n" + __copyright__ + "\n"
+			sys.exit(0)
+	if not exit:
+		# Instantiate Client module an then run the command
+		client = PiCamClient(host, port, api=apimode)
+		# Specify server interface - if is the case to launch it
+		if isrv is not None:
+			client.srvref(isrv)
+		# Check if a configuration file has been specified, read it ang get all commands defined in
+		if file is not None and os.path.isfile(file):
+			command = client.load(file, command)
+		# Run identified command
+		if not apimode:
+			client.run(command)
+		elif apimode:
+			if not statusflg:
 				cmdout = client.run(command)
-				cmdout = _camread(statuscmd, json.loads(cmdout))
 			else:
-				cmdout = ''
-		print cmdout.strip()
-	# Client normal exist
+				if statuscmd == 'list':
+					cmdout = _camlist()
+				elif statuscmd.index('@') > 0:
+					cmdout = client.run(command)
+					cmdout = _camread(statuscmd, json.loads(cmdout))
+				else:
+					cmdout = ''
+			print cmdout.strip()
+		# Client normal exist
 	sys.exit(0)
