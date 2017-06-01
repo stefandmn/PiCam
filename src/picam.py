@@ -2312,38 +2312,38 @@ class StateData:
 
 # Function: usage
 def usage():
-	print "\n" + __project__ + " " + __module__ + " " + __version__ + ", " + __license__ + ", " + __copyright__ + """
-Usage: picam -c "init server" [-f ./picam.cfg] -i "0.0.0.0" -p 9079
+	print """
+ Usage: picam -c "init server" [-f ./picam.cfg] -i "0.0.0.0" -p 9079
 
-Options:
- -v, --verbose    runs in debug/verbosity mode
- -c, --command    command that should be executed by the server component
- -i, --interface  host interface to start server component
- -h, --host       host name/ip of the server for client connectivity
- -p, --port       host port number for client connectivity
- -f, --file       file with command to start server instance or to run client commands
- -s, --status     provides contextual status of camera(s) and their properties (API for integration)
- --api            shows the client answer in JSON format
- --help           shows this help text
- --version        shows the version of client component
+ Options:
+  -v, --verbose    runs in debug/verbosity mode
+  -c, --command    command that should be executed by the server component
+  -i, --interface  host interface to start server component
+  -h, --host       host name/ip of the server for client connectivity
+  -p, --port       host port number for client connectivity
+  -f, --file       file with command to start server instance or to run client commands
+  -s, --status     provides contextual status of camera(s) and their properties (API for integration)
+  --api            shows the client answer in JSON format
+  --help           shows this help text
+  --version        shows the version of client component
 
-Examples:
-> picam -c "init server"
-> picam --command="init server"
-  = run server (using default hostname and port) using input options
-> picam init server
-  = run server (using default hostname and port) aggregating command from all input parameters
-> picam -c "init server" -i "0.0.0.0" -p 6400
-> picam --command="init server" --interface="127.0.0.1" --port=6400
-  = run server (using default hostname and port) using input options
-> picam -c "start service on #1"
-> picam --command="start service on c1"
-  = run client to start on server camera #1. The client will connect to server using default port
-> picam enable recording on c0
-  = run client (using default hostname and port) aggregating command from all input parameters
-> picam -c "set property CameraResolution=1280,720 on c1" -h "192.168.0.100" -p 6400
-> picam --command="set property CameraResolution=1280,720 on c1" --host="127.0.0.1" --port=6400
-  = run client that will send the command described by a specific option to a dedicated server
+ Examples:
+ > picam -c "init server"
+ > picam --command="init server"
+   = run server (using default hostname and port) using input options
+ > picam init server
+   = run server (using default hostname and port) aggregating command from all input parameters
+ > picam -c "init server" -i "0.0.0.0" -p 6400
+ > picam --command="init server" --interface="127.0.0.1" --port=6400
+   = run server (using default hostname and port) using input options
+ > picam -c "start service on #1"
+ > picam --command="start service on c1"
+   = run client to start on server camera #1. The client will connect to server using default port
+ > picam enable recording on c0
+   = run client (using default hostname and port) aggregating command from all input parameters
+ > picam -c "set property CameraResolution=1280,720 on c1" -h "192.168.0.100" -p 6400
+ > picam --command="set property CameraResolution=1280,720 on c1" --host="127.0.0.1" --port=6400
+   = run client that will send the command described by a specific option to a dedicated server
 """
 
 
@@ -2590,7 +2590,7 @@ if __name__ == "__main__":
 	port = None
 	statuscmd = None
 	statusflg = False
-	exit = False
+	# Evaluate input parameters and define the command(s)
 	try:
 		# Parse input parameters
 		opts, args = getopt.getopt(sys.argv[1:], "c:s:f:h:i:p:v", ["command=", "status=", "file=", "host=", "interface=", "port=", "verbose", "help", "version", "api"])
@@ -2611,12 +2611,10 @@ if __name__ == "__main__":
 			elif opt == '--api':
 				apimode = True
 			elif opt == '--help':
-				usage()
-				exit = True
+				command = None
 				break
 			elif opt == '--version':
-				print __project__ + " " + __module__ + " " + __version__ + "\n" + __copyright__ + "\n"
-				exit = True
+				command = None
 				break
 			elif opt in ("-s", "--status"):
 				command = "server status"
@@ -2628,35 +2626,34 @@ if __name__ == "__main__":
 	# Validate command: if command was not specified through input options collect all input parameters and aggregate them in one single command
 	if (command is None or command == '') and file is None and host is None and port is None:
 		command = ' '.join(sys.argv[1:])
-		if command.strip() == 'help':
+		if command.strip() in ("help", "--help"):
 			usage()
 			sys.exit(0)
-		elif command.strip() == 'version':
+		elif command.strip() in ("version", "--version"):
 			print __project__ + " " + __module__ + " " + __version__ + "\n" + __copyright__ + "\n"
 			sys.exit(0)
-	if not exit:
-		# Instantiate Client module an then run the command
-		client = PiCamClient(host, port, api=apimode)
-		# Specify server interface - if is the case to launch it
-		if isrv is not None:
-			client.srvref(isrv)
-		# Check if a configuration file has been specified, read it ang get all commands defined in
-		if file is not None and os.path.isfile(file):
-			command = client.load(file, command)
-		# Run identified command
-		if not apimode:
-			client.run(command)
-		elif apimode:
-			if not statusflg:
+	# Instantiate Client module an then run the command
+	client = PiCamClient(host, port, api=apimode)
+	# Specify server interface - if is the case to launch it
+	if isrv is not None:
+		client.srvref(isrv)
+	# Check if a configuration file has been specified, read it ang get all commands defined in
+	if file is not None and os.path.isfile(file):
+		command = client.load(file, command)
+	# Run identified command
+	if not apimode:
+		client.run(command)
+	elif apimode:
+		if not statusflg:
+			cmdout = client.run(command)
+		else:
+			if statuscmd == 'list':
+				cmdout = _camlist()
+			elif statuscmd.index('@') > 0:
 				cmdout = client.run(command)
+				cmdout = _camread(statuscmd, json.loads(cmdout))
 			else:
-				if statuscmd == 'list':
-					cmdout = _camlist()
-				elif statuscmd.index('@') > 0:
-					cmdout = client.run(command)
-					cmdout = _camread(statuscmd, json.loads(cmdout))
-				else:
-					cmdout = ''
-			print cmdout.strip()
-		# Client normal exist
+				cmdout = ''
+		print cmdout.strip()
+	# Client normal exit
 	sys.exit(0)
