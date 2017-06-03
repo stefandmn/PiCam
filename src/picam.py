@@ -1,19 +1,9 @@
-#!/usr/bin/python
+# -*- coding: utf-8 -*-
 
-import __init__
-
-__project__   = __init__.__project__
-__module__    = __init__.__module__
-__email__     = __init__.__email__
-__copyright__ = __init__.__copyright__
-__license__   = __init__.__license__
-__version__   = __init__.__version__
-__verbose__   = False
 
 import os
 import cv2
 import sys
-import time
 import json
 import time
 import numpy
@@ -33,6 +23,17 @@ try:
 	from picamera.array import PiRGBArray
 except:
 	print "%s | %s %s > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), "WARN", "PiCam", "Pi Camera is not supported")
+
+
+# PiCam Module Definition
+__project__   = "Clue"
+__module__    = "PiCam"
+__email__     = "damian.stefan@gmail.com"
+__copyright__ = "Copyright (c) 2015-2017, AMSD"
+__license__   = "GPL-2"
+__version__   = "1.0"
+__verbose__   = False
+
 
 # Class: Camera
 class Camera(threading.Thread):
@@ -1868,7 +1869,7 @@ class PiCamClient:
 		self._host = host
 		self._port = port
 		# Define logger object
-		self._logger = logger('Client')
+		self._logger = logger('Client', console=not api)
 		# Validate host name
 		if self._host is None or self._host == '':
 			self._host = '127.0.0.1'
@@ -2437,9 +2438,9 @@ def any2str(v, error=False, none=True):
 
 
 # Function: logger
-def logger(name, console=True):
+def logger(name, console=False):
 	log = logging.getLogger(name)
-	if console:
+	if console or __verbose__:
 		handler = logging.StreamHandler()
 		formater = logging.Formatter('%(asctime)s | %(levelno)s %(name)s > %(message)s')
 	else:
@@ -2457,58 +2458,71 @@ def logger(name, console=True):
 	return log
 
 
+# Function to execute external OS processes
+def procexec(cmd):
+	try:
+		if isinstance(cmd, list):
+			_output = subprocess.check_output(cmd)
+		else:
+			_output = subprocess.check_output(cmd, shell=True)
+		_status = True
+		if _output is not None:
+			_output = _output.strip()
+	except BaseException as err:
+		_status = False
+		_output = str(err)
+	return _status, _output
+
+
 # Function: diskinfo
 def diskinfo( file):
 	try:
-		p1 = subprocess.Popen(["df", file], stdout=subprocess.PIPE)
-		output = p1.communicate()[0]
-		data = output.split("\n")[1].split()
-		return {"device":any2str(data[0]), "size":any2int(data[1]), "used":any2int(data[2]), "available":any2int(data[3]), "percent":any2int(filter(str.isdigit, data[4])), "mountpoint":any2str(data[5])}
+		status, output = procexec(["/bin/df", file])
+		if status:
+			data = output.split("\n")[1].split()
+			return {"device":any2str(data[0]), "size":any2int(data[1]), "used":any2int(data[2]), "available":any2int(data[3]), "percent":any2int(filter(str.isdigit, data[4])), "mountpoint":any2str(data[5])}
+		else:
+			return None
 	except:
 		return None
 
 
 # Function: memoryinfo
 def memoryinfo():
-	try:
-		p1 = subprocess.Popen(["cat", "/proc/meminfo"], stdout=subprocess.PIPE)
-		p2 = subprocess.Popen(["grep", "Mem"], stdin=p1.stdout, stdout=subprocess.PIPE)
-		p1.stdout.close()
-		output = p2.communicate()[0]
+	status, output = procexec("/bin/cat /proc/meminfo | /bin/grep Mem")
+	if status:
 		data = output.split("\n")[0].split()
 		total = any2int(data[1])
 		data = output.split("\n")[2].split()
 		available = any2int(data[1])
 		used = any2int(total) - any2int(available)
 		return {"total":any2int(total), "used":used, "available":available}
-	except:
+	else:
 		return None
 
 
 # Function: cputempinfo
 def cputempinfo():
-	try:
-		p1 = subprocess.Popen(["vcgencmd", "measure_temp"], stdout=subprocess.PIPE)
-		output = p1.communicate()[0]
+	status, output = procexec(["/usr/bin/vcgencmd", "measure_temp"])
+	if status:
 		data = output.split("=")[1].replace("'C", "")
 		return {"temp":any2float(data)}
-	except:
+	else:
 		return None
 
 
 # Function: checkcamera
 def checkcamera(cid=0):
 	if cid == 0:
-		try:
-			p1 = subprocess.Popen(["vcgencmd", "get_camera"], stdout=subprocess.PIPE)
-			output = p1.communicate()[0]
+		status, output = procexec(["/usr/bin/vcgencmd", "get_camera"])
+		if status:
 			supported = int(output.split()[0].split("=")[1])
 			installed = int(output.split()[1].split("=")[1])
 			if supported == 1 and installed == 1:
 				return True
 			else:
 				return False
-		except:
+		else:
 			return False
 	elif cid > 0:
 		return os.path.exists('/dev/video' + str(cid - 1))
@@ -2583,13 +2597,12 @@ def tomsg(data, level=None, logger=None):
 if __name__ == "__main__":
 	# Global variables to identify input parameters
 	command = None
+	propcam = None
 	apimode = False
 	isrv = None
 	file = None
 	host = None
 	port = None
-	statuscmd = None
-	statusflg = False
 	# Evaluate input parameters and define the command(s)
 	try:
 		# Parse input parameters
@@ -2618,11 +2631,11 @@ if __name__ == "__main__":
 				break
 			elif opt in ("-s", "--status"):
 				command = "server status"
+				propcam = arg
 				apimode = True
-				statusflg = True
-				statuscmd = arg
 	except BaseException as baserr:
 		command = None
+		propcam = None
 	# Validate command: if command was not specified through input options collect all input parameters and aggregate them in one single command
 	if (command is None or command == '') and file is None and host is None and port is None:
 		command = ' '.join(sys.argv[1:])
@@ -2632,6 +2645,9 @@ if __name__ == "__main__":
 		elif command.strip() in ("version", "--version"):
 			print __project__ + " " + __module__ + " " + __version__ + "\n" + __copyright__ + "\n"
 			sys.exit(0)
+		elif command.strip() in ("-s", "--status"):
+			command = "server status"
+			apimode = True
 	# Instantiate Client module an then run the command
 	client = PiCamClient(host, port, api=apimode)
 	# Specify server interface - if is the case to launch it
@@ -2644,16 +2660,12 @@ if __name__ == "__main__":
 	if not apimode:
 		client.run(command)
 	elif apimode:
-		if not statusflg:
-			cmdout = client.run(command)
+		if propcam is not None and propcam == 'list':
+			cmdout = _camlist()
 		else:
-			if statuscmd == 'list':
-				cmdout = _camlist()
-			elif statuscmd.index('@') > 0:
-				cmdout = client.run(command)
-				cmdout = _camread(statuscmd, json.loads(cmdout))
-			else:
-				cmdout = ''
+			cmdout = client.run(command)
+			if propcam is not None and propcam.find('@') > 0:
+				cmdout = _camread(propcam, json.loads(cmdout))
 		print cmdout.strip()
 	# Client normal exit
 	sys.exit(0)

@@ -26,9 +26,9 @@ case "$1" in
 	start)
 		log_daemon_msg "Starting $DESC" "$NAME"
 		if [ -f /opt/clue/etc/picam.cfg ]; then
-			/opt/clue/bin/picam -f /opt/clue/etc/picam.cfg &
+			/opt/clue/bin/picam -v -f /opt/clue/etc/picam.cfg &
 		else
-			/opt/clue/bin/picam -c "init server" &
+			/opt/clue/bin/picam -v -c "init server" &
 		fi
 		log_end_msg $?
 		;;
