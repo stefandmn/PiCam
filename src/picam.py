@@ -1901,7 +1901,7 @@ class PiCamClient:
 				self.log(errordata)
 				sys.exit(1)
 			else:
-				self._apiData.append('{"action":"unknown", "subject": "unknown", "achieved":false, "message":' + errordata)
+				self._apiData.append('{"action":"unknown", "subject": "unknown", "achieved":false, "message":"' + str(errordata) + '"}')
 				return self._apiData
 		# Check if input command ask to start server instance
 		if data.action == StateData.Actions[0] and data.subject == StateData.Subjects[0]:
@@ -1911,7 +1911,7 @@ class PiCamClient:
 				serverhread.daemon = True
 				serverhread.start()
 				if self._api:
-					self._apiData.append('{"action":"' + StateData.Actions[0] + '", "subject":"' + StateData.Subjects[0] + '", "achieved":true, "message":' +  __project__ + " " + __module__ + " Server has been initialized")
+					self._apiData.append('{"action":"' + StateData.Actions[0] + '", "subject":"' + StateData.Subjects[0] + '", "achieved":true, "message":"' + __project__ + " " + __module__ + ' Server has been initialized"}')
 				# Check if the current command is linked by other to execute the whole chain
 				if data.hasLinkedData():
 					data = data.getLinkedData()
@@ -1977,7 +1977,7 @@ class PiCamClient:
 				if not self._api:
 					self.log(errordata)
 				else:
-					self._apiData.append('{"action":"' + data.action + '", "subject":"' + data.subject + '", "achieved":false, "message":' + errordata)
+					self._apiData.append('{"action":"' + data.action + '", "subject":"' + data.subject + '", "achieved":false, "message":"' + str(errordata) + '"}')
 			finally:
 				# Check if the current command is linked by other command
 				if data.hasLinkedData():
@@ -2665,7 +2665,10 @@ if __name__ == "__main__":
 		else:
 			cmdout = client.run(command)
 			if propcam is not None and propcam.find('@') > 0:
-				cmdout = _camread(propcam, json.loads(cmdout))
+				if cmdout is not None and cmdout.strip() != '':
+					cmdout = _camread(propcam, json.loads(cmdout))
+				else:
+					cmdout = ''
 		print cmdout.strip()
 	# Client normal exit
 	sys.exit(0)
