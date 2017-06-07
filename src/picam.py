@@ -1030,19 +1030,19 @@ class RulingEngine(CamService):
 
 	# Method: run
 	def run(self, frame):
-		self._r1(frame)
+		self._R1(frame)
 		if self._r2runner:
-			self._r2(frame)
+			self._R2(frame)
 			self._r2runner = False
 		if self._r3runner:
-			self._r3(frame)
+			self._R3(frame)
 			self._r3runner = False
 		if self._r4runner:
-			self._r4(frame)
+			self._R4(frame)
 			self._r4runner = False
 
 	# Method: _r1
-	def _r1(self, frame):
+	def _R1(self, frame):
 		# R1: when motion and recording are running try to record only motions
 		if self._camera.isCameraMotionOn() and self._camera.isCameraRecordingOn() and not self._camera.isRecordingCalibration():
 			if self._camera.isMotionDetected():
@@ -1056,8 +1056,8 @@ class RulingEngine(CamService):
 					self._camera.setFrameLabel(frame, "Standby")
 					self._camera.setRecordingPause(True)
 
-	# Method: _r2
-	def _r2(self, frame):
+	# Method: _R2
+	def _R2(self, frame):
 		# R2: when video recording is activated split the recording files after 6h from file creation date/time
 		if self._camera.isCameraRecordingOn() and self._camera.getRecordingFormat() == 'video':
 			if self._r2cronos is None:
@@ -1066,44 +1066,44 @@ class RulingEngine(CamService):
 				if (self._camera.getRecordingLastTimestamp() - self._r2cronos).total_seconds() >= 6 * 3600:
 					self._r2cronos = None
 					self._camera.setRecordingNewFile()
-					self._camera.log("Reset recording output file", "DEBUG")
+					self._camera.log("R2: Reset recording output file", "DEBUG")
 
-	# Method: _r3
-	def _r3(self, frame):
+	# Method: _R3
+	def _R3(self, frame):
 		# R3: when recording is activated and no enough space available to continue recording it will stop the recording process
 		if self._resinfo["disk"] is not None and (300 * self._camera.getRecordingAvgFrameSize() >= int(self._resinfo["disk"]["available"])):
 			if self._camera.isCameraRecordingOn():
-				self._camera.log("Recording process will be stopped because '" + str(self._resinfo["disk"]["mountpoint"]) + "' file system will is almost full (it has " + str(self._resinfo["disk"]["available"]) + "KB available space)", "WARN")
+				self._camera.log("R3: Recording process will be stopped because '" + str(self._resinfo["disk"]["mountpoint"]) + "' file system will is almost full (it has " + str(self._resinfo["disk"]["available"]) + "KB available space)", "WARN")
 				self._camera.setCameraRecording(False)
 				self._r3action = True
 		else:
 			if self._r3action:
 				if not self._camera.isCameraRecordingOn():
-					self._camera.log("Recording process will be resumed due to disk space availability", "WARN")
+					self._camera.log("R3: Recording process will be resumed due to disk space availability", "WARN")
 					self._camera.setCameraRecording(True)
 				self._r3action = False
 
-	# Method: _r4
-	def _r4(self, frame):
+	# Method: _R4
+	def _R4(self, frame):
 		# R4: when cpu temperature is too high stop each services one by one
-		if self._resinfo["cpu"] is not None and int(self._resinfo["cpu"]["temp"]) >= 80:
+		if self._resinfo["cpu"] is not None and int(self._resinfo["cpu"]["temp"]) >= 79.5:
 			if self._camera.isCameraMotionOn():
-				self._camera.log("Motion detection process will be stopped because the processor temperature is too high (it has " + str(self._resinfo["cpu"]["temp"]) + "'C)", "WARN")
+				self._camera.log("R4: Motion detection process will be stopped because the processor temperature is too high (it has now " + str(self._resinfo["cpu"]["temp"]) + "'C)", "WARN")
 				self._camera.setCameraMotion(False)
 				self._r4action1 = True
 			elif self._camera.isCameraRecordingOn():
-				self._camera.log("Recording process will be stopped because the processor temperature is too high (it has " + str(self._resinfo["cpu"]["temp"]) + "'C)", "WARN")
+				self._camera.log("R4: Recording process will be stopped because the processor temperature is too high (it has now " + str(self._resinfo["cpu"]["temp"]) + "'C)", "WARN")
 				self._camera.setCameraRecording(False)
 				self._r4action2 = True
 		else:
 			if self._r4action1:
 				if not self._camera.isCameraMotionOn():
-					self._camera.log("Motion detection process will be resumed due to normal temperature of cpu", "WARN")
+					self._camera.log("R4: Motion detection process will be resumed due to normal temperature of cpu", "WARN")
 					self._camera.setCameraMotion(True)
 				self._r4action1 = False
 			elif self._r4action2:
 				if not self._camera.isCameraRecordingOn():
-					self._camera.log("Recording process will be resumed due to normal temperature of cpu", "WARN")
+					self._camera.log("R4: Recording process will be resumed due to normal temperature of cpu", "WARN")
 					self._camera.setCameraRecording(True)
 				self._r4action2 = False
 
@@ -1279,6 +1279,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 	allow_reuse_address = True
 	daemon_threads = True
 	_cameras = {}
+	_changes = {}
 
 	# Constructor
 	def __init__(self, server_address, handler, bind_and_activate=True):
@@ -1287,7 +1288,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 		self._logger = logger('Server', False)
 		# Server is initiated
 		self._running = True
-		self.log("============================================================================")
+		self.log("======================================")
 		self.log(__project__ + " " + __module__ + " Server has been initialized")
 
 	# Method _answer
@@ -1323,30 +1324,6 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 			else:
 				print "%s | %s Server > %s" % (time.strftime("%y%m%d%H%M%S", time.localtime()), type, message)
 
-	# Method: streamline
-	@staticmethod
-	def streamline(service):
-		if service is not None and isinstance(service, dict):
-			try:
-				# CameraSleeptime
-				if service.get(StateData.Properties[6]) and any2float(service[StateData.Properties[6]]) == Camera.Sleeptime:
-					service[StateData.Properties[6]] = "default"
-				# StreamingSleeptime
-				if service.get(StateData.Properties[13]) and any2float(service[StateData.Properties[13]]) == Camera.StreamSleeptime:
-					service[StateData.Properties[13]] = "default"
-				# StreamingPort
-				if service.get(StateData.Properties[12]) and any2int(service[StateData.Properties[12]]) == Camera.StreamStartPort + int(filter(str.isdigit, str(service[StateData.Properties[0]]).strip())):
-					service[StateData.Properties[12]] = "default"
-				# Drop all default values from the service configuration
-				for key in service.keys():
-					if service[key] == "default":
-						del service[key]
-				return True
-			except:
-				return False
-		else:
-			return False
-
 	# Method: getCameras
 	def getCameras(self):
 		return self._cameras
@@ -1360,6 +1337,22 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 		self._running = False
 		TCPServer.shutdown(self)
 		self.server_close()
+
+	# Method: _setChange
+	def _setChange(self, id, property, value):
+		if not self._changes.get(str(id)):
+			self._changes[str(id)] = {}
+			self._changes[str(id)][StateData.Properties[0]] = any2int(id)
+		if value is not None:
+			if (isinstance(value, bool) and value == True) or (isinstance(value, str) and value.lower() == 'true'):
+				value = "On"
+			elif (isinstance(value, bool) and value == False) or (isinstance(value, str) and value.lower() == 'false'):
+				value = "Off"
+			self._changes[str(id)][str(property)] = value
+
+	#Method: _getChanges
+	def _getChanges(self):
+		return self._changes
 
 	# Method: runActionEcho
 	def runServerEcho(self):
@@ -1448,6 +1441,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 					camera.setStreamingPort(self.server_address[1] + 1 + camera.id)
 					camera.start()
 					self.getCameras()[key] = camera
+					self._setChange(camera.id, StateData.Properties[1], "On")
 					msg = "Camera " + key + " has been started"
 				except BaseException as stderr:
 					achieved = False
@@ -1482,6 +1476,7 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 					camera = self.getCameras()[key]
 					camera.stop()
 					del self.getCameras()[key]
+					self._setChange(camera.id, StateData.Properties[1], "Off")
 					msg = "Camera " + key + " has been stopped"
 				except BaseException as stderr:
 					achieved = False
@@ -1521,60 +1516,78 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 					camera = self.getCameras()[key]
 					# Evaluate CameraStreaming property
 					if camprop.lower() == StateData.Properties[2].lower():
-						camera.setCameraStreaming(any2bool(camdata, error=True, none=False))
+						camdata = any2bool(camdata, error=True, none=False)
+						camera.setCameraStreaming(camdata)
 					# Evaluate CameraMotion property
 					elif camprop.lower() == StateData.Properties[3].lower():
-						camera.setCameraMotion(any2bool(camdata, error=True, none=False))
+						camdata = any2bool(camdata, error=True, none=False)
+						camera.setCameraMotion(camdata)
 					# Evaluate CameraResolution property
 					elif camprop.lower() == StateData.Properties[4].lower():
-						camera.setCameraResolution(any2str(camdata, error=True, none=False))
+						camdata = any2str(camdata, error=True, none=False)
+						camera.setCameraResolution(camdata)
 					# Evaluate CameraFramerate property
 					elif camprop.lower() == StateData.Properties[5].lower():
-						camera.setCameraFramerate(any2int(camdata, error=True, none=False))
+						camdata = any2int(camdata, error=True, none=False)
+						camera.setCameraFramerate(camdata)
 					# Evaluate CameraBrightness property
 					elif camprop.lower() == StateData.Properties[15].lower():
-						camera.setCameraBrightness(any2int(camdata, error=True, none=False))
+						camdata = any2int(camdata, error=True, none=False)
+						camera.setCameraBrightness(camdata)
 					# Evaluate CameraSaturation property
 					elif camprop.lower() == StateData.Properties[16].lower():
-						camera.setCameraSaturation(any2int(camdata, error=True, none=False))
+						camdata = any2int(camdata, error=True, none=False)
+						camera.setCameraSaturation(camdata)
 					# Evaluate CameraContrast property
 					elif camprop.lower() == StateData.Properties[17].lower():
-						camera.setCameraContrast(any2int(camdata, error=True, none=False))
+						camdata = any2int(camdata, error=True, none=False)
+						camera.setCameraContrast(camdata)
 					# Evaluate CameraSleeptime property
 					elif camprop.lower() == StateData.Properties[6].lower():
-						camera.setCameraSleeptime(any2float(camdata, error=True, none=False))
+						camdata = any2float(camdata, error=True, none=False)
+						camera.setCameraSleeptime(camdata)
 					# Evaluate MotionContour property
 					elif camprop.lower() == StateData.Properties[7].lower():
-						camera.setMotionContour(any2bool(camdata, error=True, none=False))
+						camdata = any2bool(camdata, error=True, none=False)
+						camera.setMotionContour(camdata)
 					# Evaluate MotionThreshold property
 					elif camprop.lower() == StateData.Properties[10].lower():
-						camera.setMotionThreshold(any2int(camdata, error=True, none=False))
+						camdata = any2int(camdata, error=True, none=False)
+						camera.setMotionThreshold(camdata)
 					# Evaluate MotionSympathy property
 					elif camprop.lower() == StateData.Properties[14].lower():
-						camera.setMotionSympathy(any2int(camdata, error=True, none=False))
+						camdata = any2int(camdata, error=True, none=False)
+						camera.setMotionSympathy(camdata)
 					# Evaluate CameraRecording property
 					elif camprop.lower() == StateData.Properties[8].lower():
-						camera.setCameraRecording(any2bool(camdata, error=True, none=False))
+						camdata = any2bool(camdata, error=True, none=False)
+						camera.setCameraRecording(camdata)
 					# Evaluate RecordingFormat property
 					elif camprop.lower() == StateData.Properties[9].lower():
-						camera.setRecordingFormat(any2str(camdata, error=True, none=False))
+						camdata = any2str(camdata, error=True, none=False)
+						camera.setRecordingFormat(camdata)
 					# Evaluate RecordingEncoder property
 					elif camprop.lower() == StateData.Properties[18].lower():
-						camera.setRecordingEncoder(any2str(camdata, error=True, none=False))
+						camdata = any2str(camdata, error=True, none=False)
+						camera.setRecordingEncoder(camdata)
 					# Evaluate RecordingLocation property
 					elif camprop.lower() == StateData.Properties[11].lower():
-						camera.setRecordingLocation(any2str(camdata, error=True, none=False))
+						camdata = any2str(camdata, error=True, none=False)
+						camera.setRecordingLocation(camdata)
 					# Evaluate StreamingPort property
 					elif camprop.lower() == StateData.Properties[12].lower():
-						camera.setStreamingPort(any2int(camdata, error=True, none=False))
+						camdata = any2int(camdata, error=True, none=False)
+						camera.setStreamingPort(camdata)
 					# Evaluate StreamingSleeptime property
 					elif camprop.lower() == StateData.Properties[13].lower():
-						camera.setStreamingSleep(any2float(camdata, error=True, none=False))
+						camdata = any2float(camdata, error=True, none=False)
+						camera.setStreamingSleep(camdata)
 					else:
 						achieved = False
 						lvl = 'WARN'
 						msg = 'Unknown property: ' + camprop
 					if achieved:
+						self._setChange(camera.id, camprop, camdata)
 						msg = "Camera " + key + " has been updated using property '" + camprop + "' = '" + str(camdata) + "'"
 				except BaseException as stderr:
 					achieved = False
@@ -1617,8 +1630,6 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 				if cfg.get("services"):
 					# Load services from configuration
 					for service in cfg['services']:
-						# Streamline service configuration removing default values
-						PiCamServer.streamline(service)
 						# Validate camera id and status
 						if service.get(StateData.Properties[0]) is None:
 							continue
@@ -1823,11 +1834,13 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 		# Call initiation output
 		self.log("Call [Server Save]", 'DEBUG')
 		try:
+			# Collect changes and describe services
+			status = []
+			for camkey in self._getChanges().keys():
+				status.append(self._getChanges()[camkey])
 			# Set default configuration
 			if path is None:
 				path = "/opt/clue/etc/picam.cfg"
-			# Get server status
-			status = json.loads(self.runServerStatus())
 			# Read the file configuration (if exists)
 			if path is not None and  os.path.isfile(path):
 				file = open(path, 'r')
@@ -1835,10 +1848,10 @@ class PiCamServer(ThreadingMixIn, TCPServer):
 				file.close()
 				if cfg.get("services"):
 					del cfg["services"]
-				cfg["services"] = status["result"]["services"]
+				cfg["services"] = status
 			else:
-				cfg = json.loads('{"host":"' + status["result"]["host"] + '", "port":' + str(status["result"]["port"]) + '}')
-				cfg["services"] = status["result"]["services"]
+				cfg = json.loads('{"host":"' + str(self.server_address[0]) + '", "port":' + str(self.server_address[1]) + '}')
+				cfg["services"] = status
 			# Write consolidated configuration in file
 			file = open(path, 'w')
 			file.write(json.dumps(cfg, indent=4, sort_keys=True))
@@ -2100,8 +2113,6 @@ class PiCamClient:
 					# Handle services
 					if data.get("services"):
 						for service in data['services']:
-							# Streamline service configuration removing default values
-							PiCamServer.streamline(service)
 							# Validate camera id
 							if service.get(StateData.Properties[0]) is None:
 								continue
@@ -2442,17 +2453,18 @@ def logger(name, console=False):
 	log = logging.getLogger(name)
 	if console or __verbose__:
 		handler = logging.StreamHandler()
-		formater = logging.Formatter('%(asctime)s | %(levelno)s %(name)s > %(message)s')
+		formater = logging.Formatter('%(asctime)s | %(levelname)s %(name)s > %(message)s')
+		formater.datefmt = '%y%m%d %H%M%S'
 	else:
 		handler = logging.FileHandler('/var/log/picam.log')
-		formater = logging.Formatter('%(asctime)s | %(thread)d | %(levelno)s %(name)s > %(message)s')
+		formater = logging.Formatter('%(asctime)s | %(thread)d | %(levelname)s %(name)s > %(message)s')
+		formater.datefmt = '%Y-%m-%d %H:%M:%S'
 	if __verbose__:
 		log.setLevel(logging.DEBUG)
 		handler.setLevel(logging.DEBUG)
 	else:
 		log.setLevel(logging.INFO)
 		handler.setLevel(logging.INFO)
-	formater.datefmt = '%Y%m%d%H%M%S'
 	handler.setFormatter(formater)
 	log.addHandler(handler)
 	return log
@@ -2575,7 +2587,7 @@ def tomsg(data, level=None, logger=None):
 	for obj in objlist:
 		if isinstance(obj, BaseException):
 			# When verbose is activated print out the stacktrace
-			if __verbose__ or logger is not None:
+			if __verbose__:
 				if logger is not None:
 					logger.exception("Exception:")
 				else:
