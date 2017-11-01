@@ -1,5 +1,5 @@
 #!/bin/bash
 
-if [ $1 == "remove" ]; then
+if [ "$1" == "remove" ]; then
 	true
 fi

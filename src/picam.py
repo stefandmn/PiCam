@@ -556,7 +556,7 @@ class Camera(threading.Thread):
 	# Method: setFrameText
 	def setFrameLabel(self, frame, text):
 		if frame is not None and text is not None:
-			message = text + " @ " + time.strftime("%d-%m-%Y %H:%M:%S", time.localtime())
+			message = text + " @ " + time.strftime("%d.%m.%Y %H:%M:%S", time.localtime())
 			cv2.putText(frame, message, (10, numpy.size(frame, 0) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255))
 
 # Class: CamService
