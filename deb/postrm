@@ -1,5 +1,8 @@
 #!/bin/bash
 
 if [ "$1" == "remove" ] || [ "$1" == "purge" ]; then
-	true
+	# Remove system resources
+	if [ "$1" == "purge" ]; then
+		rm -rf /opt/clue/etc/picam.cfg
+	fi
 fi

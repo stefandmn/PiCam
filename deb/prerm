@@ -1,5 +1,10 @@
 #!/bin/bash
 
 if [ "$1" == "remove" ]; then
-	true
+	# Remove service
+	if [ $(ps -ef | grep "picam" | grep -v "grep" | wc -l) -eq 0 ]; then
+		service clue-picam stop >/dev/null 2>&1
+	fi
+	/usr/sbin/update-rc.d -f clue-picam remove >/dev/null 2>&1
+	/bin/systemctl daemon-reload >/dev/null 2>&1
 fi
