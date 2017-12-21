@@ -25,12 +25,17 @@ export PATH PYTHONPATH
 case "$1" in
 	start)
 		log_daemon_msg "Starting $DESC" "$NAME"
-		if [ -f /opt/clue/etc/picam.cfg ]; then
-			/opt/clue/bin/picam -f /opt/clue/etc/picam.cfg &
+		if [[ $(ps -ef | grep "init splash setup" | grep -v "grep" | wc -l) -eq 0 ]]; then
+			if [ -f /opt/clue/etc/picam.cfg ]; then
+				/opt/clue/bin/picam -f /opt/clue/etc/picam.cfg &
+			else
+				/opt/clue/bin/picam -c "init server" &
+			fi
+			log_end_msg $?
 		else
-			/opt/clue/bin/picam -c "init server" &
+			log_progress_msg "Service won't start because the system is still in [setup] mode"
+			log_end_msg 1
 		fi
-		log_end_msg $?
 		;;
 	stop)
 		log_daemon_msg "Stopping $DESC" "$NAME"

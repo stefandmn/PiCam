@@ -2,7 +2,7 @@
 
 if [ "$1" == "remove" ]; then
 	# Remove service
-	if [ $(ps -ef | grep "picam" | grep -v "grep" | wc -l) -eq 0 ]; then
+	if [ $(ps -ef | grep "picam" | grep -v "grep" | grep -v "apt" | grep -v "dpkg" | wc -l) -ne 0 ]; then
 		service clue-picam stop >/dev/null 2>&1
 	fi
 	/usr/sbin/update-rc.d -f clue-picam remove >/dev/null 2>&1
