@@ -25,7 +25,7 @@ export PATH PYTHONPATH
 case "$1" in
 	start)
 		log_daemon_msg "Starting $DESC" "$NAME"
-		if [[ $(ps -ef | grep "init splash setup" | grep -v "grep" | wc -l) -eq 0 ]]; then
+		if [ $(ps -ef | grep "init splash setup" | grep -v "grep" | wc -l) -eq 0 ]; then
 			if [ -f /opt/clue/etc/picam.cfg ]; then
 				/opt/clue/bin/picam -f /opt/clue/etc/picam.cfg &
 			else
