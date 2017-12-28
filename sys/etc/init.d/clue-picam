@@ -13,8 +13,13 @@
 
 NAME=picam
 DESC="Clue PiCam"
+DAEMON=/opt/clue/bin/picam
+SETUP="/opt/clue/bin/setup"
 
 ############### END EDIT ME ##################
+
+test -x $DAEMON || exit 10
+test -x $SETUP || exit 0
 
 . /lib/lsb/init-functions
 
@@ -22,16 +27,29 @@ PATH=/opt/clue/bin:$PATH
 PYTHONPATH=/opt/clue/lib/python2.7/dist-packages:$PYTHONPATH
 export PATH PYTHONPATH
 
+infosvc()
+{
+	local runlevel=$(/sbin/runlevel | cut -d' ' -f2)
+	local runevent=$(ps -ef | grep "dpkg" | grep -v "grep" | wc -l)
+	local runguide=$($SETUP -g service -s splash)
+
+	if [ $(more /proc/cmdline | grep splash | wc -l) -gt 0 ] && [ "${runlevel}" = "5" ] && [ ${runevent} -eq 0 ] && [ "${runguide}" = "active" ]; then
+		$SETUP --splash --info -s $NAME $1
+	fi
+}
+
 case "$1" in
 	start)
 		log_daemon_msg "Starting $DESC" "$NAME"
 		if [ $(ps -ef | grep "init splash setup" | grep -v "grep" | wc -l) -eq 0 ]; then
 			if [ -f /opt/clue/etc/picam.cfg ]; then
-				/opt/clue/bin/picam -f /opt/clue/etc/picam.cfg &
+				$DAEMON -f /opt/clue/etc/picam.cfg &
 			else
-				/opt/clue/bin/picam -c "init server" &
+				$DAEMON -c "init server" &
 			fi
+
 			log_end_msg $?
+			infosvc "start"
 		else
 			log_progress_msg "Service won't start because the system is still in [setup] mode"
 			log_end_msg 1
@@ -39,14 +57,16 @@ case "$1" in
 		;;
 	stop)
 		log_daemon_msg "Stopping $DESC" "$NAME"
-		/opt/clue/bin/picam -c "shutdown server"
+		$DAEMON -c "shutdown server"
+
 		log_end_msg $?
+		infosvc "stop"
 		;;
 	restart)
 		$0 stop && sleep 2 && $0 start
 		;;
 	status)
-		/opt/clue/bin/picam status server
+		$DAEMON status server
 		;;
 	*)
 		echo "Usage: $0 {start|stop|status|restart}"
